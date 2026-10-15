@@ -67,10 +67,11 @@
       <p><span class="subtitle">{{ page.subtitle }}</span> <span class="subtitle-links">({{ page.previous_section_name
           }} | <a href="{{ page.next_section_url }}">{{ page.next_section_name }}</a>)</span></p>
       {% else %}
-      <p>Part {{ page.section_number }} of <a href="{{ site.baseurl }}">{{ site.title }}</a> (<a
+      <p><a href="{{ site.baseurl }}/">{{ site.title }}</a> 第 {{ page.section_number }} 部分（<a
           href="{{ page.previous_section_url }}">{{ page.previous_section_name }}</a> | <a
-          href="{{ page.next_section_url }}">{{ page.next_section_name }}</a>)</p>
+          href="{{ page.next_section_url }}">{{ page.next_section_name }}</a>）</p>
       {% endif %}
+      <p class="translation-notice" style="font-size: 0.9em; opacity: 0.8;">本文是 <a href="https://jax-ml.github.io/scaling-book/">How To Scale Your Model</a>（Austin 等，Google DeepMind，2025）的非官方简体中文译本，依原项目 <a href="https://github.com/jax-ml/scaling-book/blob/main/LICENSE">MIT 许可证</a> 发布。如有出入，请以<a href="https://jax-ml.github.io/scaling-book/{{ page.url | remove_first: '/' | remove: 'index' | remove: '.html' }}">英文原文</a>为准。</p>
       <p>{{ page.description }}</p>
     </d-title>
 
@@ -111,16 +112,16 @@
       {% if page.toc %}
       <d-contents>
         <nav class="l-text figcaption">
-          <h3>Contents</h3>
+          <h3>目录</h3>
           {% for section in page.toc %}
           <div>
-            <a href="#{{ section.name | slugify }}">{{ section.name }}</a>
+            <a href="#{% if section.id %}{{ section.id }}{% else %}{{ section.name | slugify }}{% endif %}">{{ section.name }}</a>
           </div>
           {% if section.subsections %}
           <ul>
             {% for subsection in section.subsections %}
             <li>
-              <a href="#{{ subsection.name | slugify }}">{{ subsection.name }}</a>
+              <a href="#{% if subsection.id %}{{ subsection.id }}{% else %}{{ subsection.name | slugify }}{% endif %}">{{ subsection.name }}</a>
             </li>
             {% endfor %}
           </ul>

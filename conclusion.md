@@ -1,8 +1,8 @@
 ---
 layout: distill
-title: "Conclusions and Further Reading"
+title: "结论与延伸阅读"
 # permalink: /main/
-description: "Thank you for reading! Here we'll include a few more references for further study."
+description: "感谢阅读！这里我们再列出一些可供进一步学习的参考资料。"
 date: 2025-02-04
 future: true
 htmlwidgets: true
@@ -11,12 +11,12 @@ hidden: false
 section_number: 11
 
 previous_section_url: "../jax-stuff"
-previous_section_name: "Part 10: JAX"
+previous_section_name: "第 10 部分：JAX"
 
 next_section_url: "../gpus"
-next_section_name: "Part 12: GPUs"
+next_section_name: "第 12 部分：GPU"
 
-giscus_comments: true
+giscus_comments: false
 giscus_discussion: 13
 
 authors:
@@ -50,9 +50,12 @@ authors:
 #     for hyperlinks within the post to work correctly.
 #   - please use this format rather than manually creating a markdown table of contents.
 toc:
-  - name: "Acknowledgments"
-  - name: "Further Reading"
-  - name: "Feedback"
+  - name: "致谢"
+    id: acknowledgments
+  - name: "延伸阅读"
+    id: further-reading
+  - name: "反馈"
+    id: feedback
 
 # Below is an example of injecting additional post-specific styles.
 # This is used in the 'Layouts' section of this post.
@@ -85,50 +88,49 @@ _styles: >
   }
 ---
 
-**Thank you for reading the whole thing and congratulations on making it all the way to the end.** Before we conclude, a few acknowledgments:
+**感谢你读完全书，恭喜你一路坚持到了最后。** 在结束之前，先说几句致谢：
 
-## Acknowledgments
+## 致谢 {#acknowledgments}
 
-This document represents a significant collective investment from many people at Google DeepMind, who we'd like to briefly acknowledge!
+这份文档凝聚了 Google DeepMind 许多人的大量心血，我们想在这里简单地向他们致谢！
 
-- James Bradbury, Reiner Pope, Noam Shazeer, and Blake Hechtman originally derived many of the ideas in this manuscript, and were early to understand the systems view of the Transformer.
-- Sholto Douglas wrote the first version of this doc and is responsible for kicking off the project. He is more than anyone responsible for the overall narrative of this doc.
-- Jacob Austin led the work of transforming this first version from rough notes into a more polished and comprehensive artifact. He did much of the work of editing, formatting, and releasing this document, and coordinated contributions from other authors.
-- Most of the figures and animations were made by Anselm Levskaya and Charlie Chen.
-- Charlie Chen wrote the inference section and drew many of the inference figures.
-- Roy Frostig helped with publication, editing, and many other steps of the journey.
+- James Bradbury、Reiner Pope、Noam Shazeer 和 Blake Hechtman 最早推导出了本书中的许多思想，也是最早从系统视角理解 Transformer 的一批人。
+- Sholto Douglas 撰写了本文档的第一版，并发起了这个项目。对于本文档的整体叙事，他的贡献比任何人都大。
+- Jacob Austin 主导了将第一版从粗略笔记打磨成一份更精致、更全面的作品的工作。编辑、排版和发布本文档的大部分工作都由他完成，他还协调了其他作者的贡献。
+- 大部分图表和动画由 Anselm Levskaya 和 Charlie Chen 制作。
+- Charlie Chen 撰写了推理部分，并绘制了许多推理相关的图。
+- Roy Frostig 在出版、编辑以及整个过程中的许多其他环节提供了帮助。
 
-We'd also like to thank many others who gave critical feedback throughout the process, in particular Zak Stone, Nikhil Sethi, Caitlin Stanton, Alek Dimitriev, Sridhar Lakshmanamurthy, Albert Magyar, Diwakar Gupta, Jeff Dean, Corry Wang, Matt Johnson, Peter Hawkins, and many others. Thanks to Ruiqi Gao for help with the HTML formatting.
+我们还要感谢在整个过程中提供了关键反馈的许多其他人，特别是 Zak Stone、Nikhil Sethi、Caitlin Stanton、Alek Dimitriev、Sridhar Lakshmanamurthy、Albert Magyar、Diwakar Gupta、Jeff Dean、Corry Wang、Matt Johnson、Peter Hawkins 以及其他很多人。感谢 Ruiqi Gao 在 HTML 排版上提供的帮助。
 
-**Thank you all!**
+**谢谢大家！**
 
-<p markdown=1 class="announce">Before you go, you might also enjoy reading the new [Part 12](../gpus) on NVIDIA GPUs!</p>
+<p markdown=1 class="announce">离开之前，你或许还会喜欢阅读关于 NVIDIA GPU 的全新[第 12 部分](../gpus)！</p>
 
-## Further Reading
+## 延伸阅读 {#further-reading}
 
-There is a bunch of related writing, including the following:
+有很多相关的文章，包括以下这些：
 
-- [**TPU Deep Dive**](https://henryhmko.github.io/posts/tpu/tpu.html): a wonderful in-depth look at the TPU architecture in the spirit of this book.
-- [**Domain specific architectures for AI inference**](https://fleetwood.dev/posts/domain-specific-architectures): a hardware and model deep dive in the spirit of this book.
-- [**A Domain-Specific Supercomputer for Training Deep Neural Networks**](https://dl.acm.org/doi/pdf/10.1145/3360307): one of the OG TPU papers, this has a lot of great details about the Google TPU program not covered here.
-- [**Making Deep Learning Go Brrrr From First Principles**](https://horace.io/brrr_intro.html): a more GPU and PyTorch-focused tutorial on LLM rooflines and performance engineering.
-- [**Writing TPU Kernels with Pallas**](https://jax.readthedocs.io/en/latest/pallas/tpu/details.html): increasingly, TPU programming involves writing custom kernels in Pallas. This series discusses how to write kernels and many lower level TPU details that aren't mentioned here.
-- [**How to Optimize a CUDA Matmul Kernel for cuBLAS-like Performance: a Worklog**](https://siboehm.com/articles/22/CUDA-MMM): while GPU and CUDA specific, this is an excellent blog post showing how to optimize a matmul kernel in CUDA. This might be a good deep dive into how TPUs and GPUs are different.
-- [**Distributed arrays and automatic parallelization**](https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html): this is a really nice guide to parallelism APIs in JAX and is a good way to learn how to actually implement some of the ideas we've discussed here.
-- [**Rafi Witten's High Performance LLMs 2024 Class**](https://github.com/rwitten/HighPerfLLMs2024): our former colleague Rafi gave a great course on TPU performance engineering and the slides are all on GitHub. This covers a bunch of things in more depth than we do here.
-- [**\[2211.05102\] Efficiently Scaling Transformer Inference**](https://arxiv.org/abs/2211.05102): a detailed paper on the mathematics of Transformer inference. This is the inspiration for a lot of this document.
-- [**Huggingface Ultra-Scale Playbook**](https://huggingface.co/spaces/nanotron/ultrascale-playbook): something of a GPU analog to this book, this talks more at depth about how PyTorch implements parallelism techniques and memory-saving techniques during training.
-- [**Transformer Inference Arithmetic**](https://kipp.ly/transformer-inference-arithmetic/): a blog with many of the same ideas as this book and some excellent illustrations.
-- [**Stanford CS336 Slides and Videos**](https://stanford-cs336.github.io/spring2025/index.html#coursework): a fantastic Stanford course covering many details of LLM training and serving, with some useful exercises. Assignments 1 and 2 are particularly relevant.
-- [**Stas Bekman's ML Engineering Handbook**](https://github.com/stas00/ml-engineering): a highly practical guide to ML infrastructure, covering topics not addressed in this book like how to negotiate with cloud providers, cluster management, and empirical measurements of GPU throughput.
-- [**ezyang's blog**](https://blog.ezyang.com/2026/01/computing-sharding-with-einsum/): a PyTorch lead's blog on all things sharding + PyTorch, including a [guide to PyTorch internals](https://blog.ezyang.com/2019/05/pytorch-internals/) and a [writeup of sharded matrix multiplication](https://blog.ezyang.com/2026/01/computing-sharding-with-einsum/). Lots of other good things here.
-- [**The Anatomy of Collective Communication**](https://www.aleksagordic.com/blog/collective-operations): a nice walkthrough of GPU and TPU collectives in the spirit of this book. Has a better writeup of N-D and GPU collectives than this book.
+- [**TPU Deep Dive**](https://henryhmko.github.io/posts/tpu/tpu.html)：一篇很棒的深入剖析 TPU 架构的文章，风格与本书一脉相承。
+- [**Domain specific architectures for AI inference**](https://fleetwood.dev/posts/domain-specific-architectures)：一篇对硬件和模型的深入探讨，风格与本书一脉相承。
+- [**A Domain-Specific Supercomputer for Training Deep Neural Networks**](https://dl.acm.org/doi/pdf/10.1145/3360307)：最早的 TPU 论文之一，包含许多关于 Google TPU 项目的精彩细节，这些内容本书没有涉及。
+- [**Making Deep Learning Go Brrrr From First Principles**](https://horace.io/brrr_intro.html)：一篇更侧重 GPU 和 PyTorch 的教程，讲解 LLM 的 Roofline 分析与性能工程。
+- [**Writing TPU Kernels with Pallas**](https://jax.readthedocs.io/en/latest/pallas/tpu/details.html)：TPU 编程越来越多地涉及用 Pallas 编写自定义 kernel。这一系列文档讨论了如何编写 kernel，以及许多本书未提及的更底层的 TPU 细节。
+- [**How to Optimize a CUDA Matmul Kernel for cuBLAS-like Performance: a Worklog**](https://siboehm.com/articles/22/CUDA-MMM)：虽然专门针对 GPU 和 CUDA，但这是一篇出色的博客文章，展示了如何在 CUDA 中优化矩阵乘法（matmul）kernel。它或许能帮你深入理解 TPU 与 GPU 的区别。
+- [**Distributed arrays and automatic parallelization**](https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html)：这是一份非常好的 JAX 并行 API 指南，也是学习如何实际实现我们在这里讨论的一些思想的好途径。
+- [**Rafi Witten's High Performance LLMs 2024 Class**](https://github.com/rwitten/HighPerfLLMs2024)：我们的前同事 Rafi 开过一门很棒的 TPU 性能工程课程，所有幻灯片都放在 GitHub 上。其中很多内容比本书讲得更深入。
+- [**\[2211.05102\] Efficiently Scaling Transformer Inference**](https://arxiv.org/abs/2211.05102)：一篇详细讨论 Transformer 推理数学的论文，本文档的许多内容都受其启发。
+- [**Huggingface Ultra-Scale Playbook**](https://huggingface.co/spaces/nanotron/ultrascale-playbook)：可以算是本书的 GPU 版对应读物，它更深入地讨论了 PyTorch 在训练中如何实现各种并行技术和节省内存的技术。
+- [**Transformer Inference Arithmetic**](https://kipp.ly/transformer-inference-arithmetic/)：一篇博客，包含许多与本书相同的思想，还有一些出色的插图。
+- [**Stanford CS336 Slides and Videos**](https://stanford-cs336.github.io/spring2025/index.html#coursework)：一门非常棒的 Stanford 课程，涵盖了 LLM 训练和部署的许多细节，并配有一些有用的练习。其中作业 1 和作业 2 尤其相关。
+- [**Stas Bekman's ML Engineering Handbook**](https://github.com/stas00/ml-engineering)：一份非常实用的 ML 基础设施指南，涵盖了本书没有涉及的主题，比如如何与云服务商谈判、集群管理，以及 GPU 吞吐量的实测数据。
+- [**ezyang's blog**](https://blog.ezyang.com/2026/01/computing-sharding-with-einsum/)：一位 PyTorch 负责人的博客，内容涵盖分片与 PyTorch 的方方面面，包括一篇 [PyTorch 内部机制指南](https://blog.ezyang.com/2019/05/pytorch-internals/)和一篇[关于分片矩阵乘法的文章](https://blog.ezyang.com/2026/01/computing-sharding-with-einsum/)。这里还有很多其他好内容。
+- [**The Anatomy of Collective Communication**](https://www.aleksagordic.com/blog/collective-operations)：一篇不错的 GPU 和 TPU 集合通信详解，风格与本书一脉相承。它对 N 维集合通信和 GPU 集合通信的讲解比本书更好。
 
-There remains a lot of room for comprehensive writing in this area, so we hope this manuscript encourages more of it! We also believe that this is a fruitful area to study and research. In many cases, it can be done even without having many hardware accelerators on hand.
+这一领域仍有大量空间留给全面系统的写作，我们希望本书能激励更多这样的作品！我们也相信这是一个值得学习和研究的、大有可为的领域。在很多情况下，即使手头没有很多硬件加速器，也可以开展这方面的研究。
 
-## Feedback
+## 反馈 {#feedback}
 
-Please leave comments or questions so that we can improve this
-further. You can reach our corresponding author, Jacob Austin, at
-jacobaustin123 [at] gmail [dot] com, or suggest edits by posting issues,
-pull requests, or discussions [on GitHub](https://github.com/jax-ml/scaling-book).
+欢迎留下评论或问题，帮助我们进一步改进本书。你可以通过
+jacobaustin123 [at] gmail [dot] com 联系我们的通讯作者 Jacob Austin，也可以
+[在 GitHub 上](https://github.com/jax-ml/scaling-book)提交 issue、pull request 或发起讨论来建议修改。

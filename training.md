@@ -1,8 +1,8 @@
 ---
 layout: distill
-title: "How to Parallelize a Transformer for Training"
+title: "如何为训练并行化 Transformer"
 # permalink: /main/
-description: "Here we discuss four main parallelism schemes used during LLM training: data parallelism, fully-sharded data parallelism (FSDP), tensor parallelism, and pipeline parallelism. For each, we calculate at what point we become bottlenecked by communication."
+description: "本章讨论 LLM 训练中使用的四种主要并行方案：数据并行、完全分片数据并行（FSDP）、张量并行和流水线并行。对于每一种方案，我们都会计算在什么情况下会遇到通信瓶颈。"
 date: 2025-02-04
 future: true
 htmlwidgets: true
@@ -11,14 +11,14 @@ hidden: false
 section_number: 5
 
 previous_section_url: "../transformers"
-previous_section_name: "Part 4: Transformers"
+previous_section_name: "第 4 部分：Transformer 数学"
 
 next_section_url: ../applied-training
-next_section_name: "Part 6: Training LLaMA"
+next_section_name: "第 6 部分：训练 LLaMA"
 
 bibliography: main.bib
 
-giscus_comments: true
+giscus_comments: false
 giscus_discussion: 7
 
 authors:
@@ -52,19 +52,30 @@ authors:
 #     for hyperlinks within the post to work correctly.
 #   - please use this format rather than manually creating a markdown table of contents.
 toc:
-  - name: "What Do We Mean By Scaling?"
+  - name: "我们所说的扩展是什么意思？"
+    id: what-do-we-mean-by-scaling
   - subsections:
-    - name: "Data Parallelism"
-    - name: "Fully-Sharded Data Parallelism (FSDP)"
-    - name: "Tensor Parallelism"
-    - name: "Combining FSDP and Tensor Parallelism"
-    - name: "Pipelining"
-    - name: "Scaling Across Pods"
-  - name: "Takeaways from LLM Training on TPUs"
-  - name: "Some Problems to Work"
-  - name: "Appendix"
+    - name: "数据并行"
+      id: data-parallelism
+    - name: "完全分片数据并行（FSDP）"
+      id: fully-sharded-data-parallelism-fsdp
+    - name: "张量并行"
+      id: tensor-parallelism
+    - name: "结合 FSDP 与张量并行"
+      id: combining-fsdp-and-tensor-parallelism
+    - name: "流水线"
+      id: pipelining
+    - name: "跨 Pod 扩展"
+      id: scaling-across-pods
+  - name: "TPU 上 LLM 训练的要点"
+    id: takeaways-from-llm-training-on-tpus
+  - name: "练习题"
+    id: some-problems-to-work
+  - name: "附录"
+    id: appendix
   - subsections:
-    - name: "Appendix A: Deriving the backward pass comms"
+    - name: "附录 A：推导反向传播的通信"
+      id: appendix-a-deriving-the-backward-pass-comms
 
 # Below is an example of injecting additional post-specific styles.
 # This is used in the 'Layouts' section of this post.
@@ -86,207 +97,207 @@ _styles: >
   }
 ---
 
-## What Do We Mean By Scaling?
+## 我们所说的扩展是什么意思？ {#what-do-we-mean-by-scaling}
 
-The goal of "model scaling" is to be able to increase the number of chips used for training or inference while achieving a proportional, linear increase in throughput (we call this *strong scaling*). While performance on a single chip depends on the trade-off between memory bandwidth and FLOPs, performance at the cluster level depends on hiding inter-chip communication by overlapping it with useful FLOPs. This is non-trivial, because increasing the number of chips increases the communication load while reducing the amount of per-device computation we can use to hide it. As we saw in [Section 3](../sharding), sharded matrix multiplications often require expensive AllGathers or ReduceScatters that can block the TPUs from doing useful work. The goal of this section is to find out when these become *too expensive.*
+“模型扩展”的目标是：在增加用于训练或推理的芯片数量的同时，让吞吐量随之成比例地线性增长（我们称之为*强扩展*，strong scaling）。单芯片上的性能取决于内存带宽与 FLOPs 之间的权衡，而集群层面的性能则取决于能否把芯片间通信与有用的 FLOPs 重叠起来，从而将通信隐藏掉。这并不简单，因为增加芯片数量会加大通信负载，同时又减少了每个设备上可用来隐藏通信的计算量。正如我们在[第 3 部分](../sharding)中看到的，分片矩阵乘法往往需要代价高昂的 AllGather 或 ReduceScatter，它们可能会阻塞 TPU，使其无法进行有用的工作。本节的目标就是弄清楚这些操作在什么时候会变得*过于昂贵*。
 
-In this section, we'll discuss four common parallelism schemes: (pure) **data parallelism, fully-sharded data parallelism** (FSDP / ZeRO sharding), **tensor parallelism** (also known as model parallelism), and (briefly) **pipeline parallelism**. For each, we'll show what communication cost we incur and at what point that cost starts to bottleneck our compute cost.<d-footnote>We'll focus on communication bounds — since while memory capacity constraints are important, they typically do not bound us when using rematerialization (activation checkpointing) and a very large number of chips during pre-training. We also do not discuss expert parallelism here for MoEs — which expands the design space substantially, only the base case of a dense Transformer.</d-footnote> For this section, you can focus solely on inter-chip communication costs, since as long as we have a large enough single-chip batch size, the transfer of data from HBM to MXU is already overlapped with computation.
+本节将讨论四种常见的并行方案：（纯）**数据并行、完全分片数据并行**（FSDP / ZeRO 分片）、**张量并行**（也称模型并行），以及（简要介绍的）**流水线并行**。对于每一种方案，我们都会说明它会带来多少通信开销，以及这一开销在什么情况下会开始成为计算开销的瓶颈。<d-footnote>我们将重点关注通信方面的限制——虽然内存容量的约束也很重要，但在预训练中使用重计算（rematerialization，即激活值检查点）以及非常多芯片的情况下，它通常不会成为限制因素。我们在这里也不讨论 MoE 的专家并行——它会大幅扩展设计空间——只讨论稠密 Transformer 这一基本情形。</d-footnote>在本节中，你可以只关注芯片间的通信开销，因为只要单芯片的批大小足够大，从 HBM 到 MXU 的数据传输就已经与计算重叠了。
 
-We'll use the following notation to simplify calculations throughout this section.
+为了简化计算，本节将使用以下记号。
 
-| Notation | Meaning (model parameters)                                             |
+| 记号 | 含义（模型参数）                                             |
 | :------- | :--------------------------------------------------------------------- |
-| D        | **d**<sub>model</sub> (the hidden dimension/residual stream dim)      |
-| F        | **d**<sub>ff</sub> (the feed-forward dimension)                        |
-| B        | Batch dimension (number of tokens in the batch; total, not per-device) |
-| T        | Sequence length                                                        |
-| L        | Number of layers in the model                                          |
+| D        | **d**<sub>model</sub>（隐藏维度 / 残差流维度）      |
+| F        | **d**<sub>ff</sub>（前馈层维度）                        |
+| B        | 批维度（批中的 token 数；指总数，而非每个设备上的数量） |
+| T        | 序列长度                                                        |
+| L        | 模型的层数                                          |
 
-| Notation | Meaning (hardware characteristic)                                                                 |
+| 记号 | 含义（硬件特性）                                                                 |
 | :------- | :------------------------------------------------------------------------------------------------ |
-| C        | FLOPS/s per chip                                                                                  |
-| W        | Network bandwidth (bidirectional, often subscripted as  e.g. $W_{\text{ici}}$ or $W_{\text{dcn}}$) |
-| X        | Number of chips along mesh axis X                                                                 |
-| Y        | Number of chips along an alternate mesh axis, labeled Y                                           |
-| Z        | Number of chips along a third mesh axis, labeled Z                                                |
+| C        | 每芯片的 FLOPS/s                                                                                  |
+| W        | 网络带宽（双向，常带下标，例如 $W_{\text{ici}}$ 或 $W_{\text{dcn}}$） |
+| X        | 沿网格轴 X 的芯片数                                                                 |
+| Y        | 沿另一条网格轴（记为 Y）的芯片数                                           |
+| Z        | 沿第三条网格轴（记为 Z）的芯片数                                                |
 
-For simplicity's sake, **we'll approximate a Transformer as a stack of MLP blocks** — attention is a comparatively small fraction of the FLOPs for larger models as we saw in [Section 4](../transformers). We will also ignore the gating matmul, leaving us with the following simple structure for each layer:
+为简单起见，**我们把 Transformer 近似为一摞 MLP 块**——正如我们在[第 4 部分](../transformers)中看到的，对于较大的模型，注意力在 FLOPs 中所占的比例相对较小。我们还会忽略门控矩阵乘法，这样每一层就只剩下如下的简单结构：
 
-{% include figure.liquid path="assets/img/transformer-layer.png" class="img-fluid" caption="<b>Figure:</b> a simplified Transformer layer. We treat each FFW block as a stack of two matrices <b>W<sub>in</sub></b>: <code>bf16[D, F]</code> (up-projection) and <b>W<sub>out</sub></b>: <code>bf16[F, D]</code> (down-projection) with an input <b>In</b>: <code>bf16[B, D]</code>." %}
+{% include figure.liquid path="assets/img/transformer-layer.png" class="img-fluid" caption="<b>图：</b>一个简化的 Transformer 层。我们把每个 FFW 块看作两个矩阵的堆叠：<b>W<sub>in</sub></b>: <code>bf16[D, F]</code>（上投影）和 <b>W<sub>out</sub></b>: <code>bf16[F, D]</code>（下投影），输入为 <b>In</b>: <code>bf16[B, D]</code>。" %}
 
-{% details Here's the full algorithm for our little Transformer with no parallelism. %}
+{% details 下面是我们这个不带任何并行的小 Transformer 的完整算法。 %}
 
 <div markdown=1 class="algorithm">
 
-**Forward pass:** need to compute Loss[B]
+**前向传播：**需要计算 Loss[B]
 
 1.  Tmp[B, F] = In[B, D] *<sub>D</sub> W<sub>in</sub>[D, F]
 2.  Out[B, D] = Tmp[B, F] *<sub>F</sub> W<sub>out</sub>[F, D]
 3.  Loss[B] = ...
 
-**Backward pass:** need to compute dW<sub>out</sub>[F, D], dW<sub>in</sub>[D, F]
+**反向传播：**需要计算 dW<sub>out</sub>[F, D]、dW<sub>in</sub>[D, F]
 
 1.  dOut[B, D] = ...
 2.  dW<sub>out</sub>[F, D] = Tmp[B, F] *<sub>B</sub> dOut[B, D]
 3.  dTmp[B, F] = dOut[B, D] *<sub>D</sub> W<sub>out</sub>[F, D]
 4.  dW<sub>in</sub>[D, F] = In[B, D] *<sub>B</sub> dTmp[B, F]
-5.  dIn[B, D] = dTmp[B, F] \*<sub>F</sub> W<sub>in</sub>[D, F] (*needed for previous layers*)
+5.  dIn[B, D] = dTmp[B, F] \*<sub>F</sub> W<sub>in</sub>[D, F] (*前面的层需要用到*)
 
 </div>
 
-We provide this for comparison to the algorithms with communication added.
+给出这个算法是为了与加入通信之后的算法做对比。
 
 {% enddetails %}
 
-Here are the 4 parallelism schemes we will discuss. Each scheme can be thought of as uniquely defined by a sharding for **In**, **W<sub>in</sub>, W<sub>out</sub>, and Out** in the above diagram.
+下面是我们将要讨论的 4 种并行方案。每种方案都可以看作由上图中 **In**、**W<sub>in</sub>、W<sub>out</sub> 和 Out** 的分片方式唯一确定。
 
-**1. Data parallelism:** *activations sharded along batch, parameters and optimizer state are replicated on each device. Communication only occurs during the backwards pass.*
+**1. 数据并行：** *激活值沿批维度分片，参数和优化器状态在每个设备上复制一份。通信只发生在反向传播期间。*
 
 $$\text{In}[B_X, D] \cdot_D W_\text{in}[D, F] \cdot_F W_\text{out}[F, D] \rightarrow \text{Out}[B_X, D]$$
 
-**2. Fully-sharded data parallelism (FSDP or ZeRO-3):** *activations sharded along batch (like pure data parallelism), parameters sharded along same mesh axis and AllGathered just-in-time before use in forward pass. Optimizer state also sharded along batch. Reduces duplicated memory.*
+**2. 完全分片数据并行（FSDP 或 ZeRO-3）：** *激活值沿批维度分片（与纯数据并行相同），参数沿同一条网格轴分片，并在前向传播中使用之前即时（just-in-time）进行 AllGather。优化器状态同样沿批维度分片。这减少了重复的内存占用。*
 
 $$\text{In}[B_X, D] \cdot_D W_\text{in}[D_X, F] \cdot_F W_\text{out}[F, D_X] \rightarrow \text{Out}[B_X, D]$$
 
-**3. Tensor parallelism (also called Megatron sharding or model parallelism):** *activations sharded along D ($d_\text{model}$), parameters sharded along F ($d_{ff}$). AllGather and ReduceScatter activations before and after each block. Compatible with FSDP.*
+**3. 张量并行（也称 Megatron 分片或模型并行）：** *激活值沿 D（$d_\text{model}$）分片，参数沿 F（$d_{ff}$）分片。在每个块之前和之后分别对激活值做 AllGather 和 ReduceScatter。可与 FSDP 兼容。*
 
 $$\text{In}[B, D_Y] \cdot_D W_\text{in}[D, F_Y] \cdot_F W_\text{out}[F_Y, D] \rightarrow \text{Out}[B, D_Y]$$
 
-**4. Pipeline parallelism:** *weights sharded along the layer dimension, activations microbatched and rolled along the layer dimension. Communication between pipeline stages is minimal (just moving activations over a single hop). To abuse notation:*
+**4. 流水线并行：** *权重沿层维度分片，激活值被划分为微批次，并沿层维度依次传递。流水线各阶段之间的通信量极小（只需将激活值移动一跳）。稍微滥用一下记号：*
 
 $$\text{In}[L_Z, B, D][i] \cdot_D W_\text{in}[L_Z, D, F][i] \cdot_F W_\text{out}[L_Z, F, D][i] \rightarrow \text{Out}[L_Z, B, D][i]$$
 
-### Data Parallelism
+### 数据并行 {#data-parallelism}
 
-**Syntax:** $$\text{In}[B_X, D] \cdot_D W_\text{in}[D, F] \cdot_F W_\text{out}[F, D] \rightarrow \text{Out}[B_X, D]$$
+**语法：** $$\text{In}[B_X, D] \cdot_D W_\text{in}[D, F] \cdot_F W_\text{out}[F, D] \rightarrow \text{Out}[B_X, D]$$
 
-When your model fits on a single chip with even a tiny batch size (>240 tokens, so as to be compute-bound), **you should always use simple data parallelism.** Pure data parallelism splits our activations across any number of TPUs so long as the number of TPUs is smaller than our batch size. The forward pass involves no communication, but at the end of every step, **each TPU performs an AllReduce on its local gradients to synchronize them before updating the parameters.**
+当你的模型即使在很小的批大小下（>240 个 token，以保证计算受限）也能放进单个芯片时，**你应当始终使用简单的数据并行。**只要 TPU 数量小于批大小，纯数据并行就可以把激活值切分到任意数量的 TPU 上。前向传播不涉及任何通信，但在每一步结束时，**每个 TPU 都要对其本地梯度执行一次 AllReduce，在更新参数之前将梯度同步。**
 
-{% include figure.liquid path="assets/img/data-parallelism.png" class="img-fluid" caption="<b>Figure:</b> a diagram of pure data parallelism (forward pass). Our activations (left) are fully sharded along the batch dimension and our weights are fully replicated, so each TPU has an identical copy of the weights. This means the total memory of our weights is increased by a factor of N, but no communication is required on the forward-pass." %}
+{% include figure.liquid path="assets/img/data-parallelism.png" class="img-fluid" caption="<b>图：</b>纯数据并行（前向传播）示意图。激活值（左）沿批维度完全分片，而权重则完全复制，因此每个 TPU 都拥有一份相同的权重副本。这意味着权重占用的总内存增加为原来的 N 倍，但前向传播中不需要任何通信。" %}
 
-{% details Here's the full algorithm for the forward and backwards pass. We abuse notation to write dL/dOut as dOut, purely for compactness. %}
+{% details 下面是前向和反向传播的完整算法。为了简洁，我们滥用记号，把 dL/dOut 写作 dOut。 %}
 
 <div markdown=1 class="algorithm">
 
-**Pure Data Parallelism Algorithm:**
+**纯数据并行算法：**
 
-**Forward pass:** need to compute Loss[B<sub>X</sub>]
+**前向传播：**需要计算 Loss[B<sub>X</sub>]
 
 1.  Tmp[B<sub>X</sub>, F] = In[B<sub>X</sub>, D] \*<sub>D</sub> W<sub>in</sub>[D, F]
 2.  Out[B<sub>X</sub>, D] = Tmp[B<sub>X</sub>, F] \*<sub>F</sub> W<sub>out</sub>[F, D]
 3.  Loss[B<sub>X</sub>] = ...
 
-**Backward pass:** need to compute dW<sub>out</sub>[F, D], dW<sub>in</sub>[D, F]
+**反向传播：**需要计算 dW<sub>out</sub>[F, D]、dW<sub>in</sub>[D, F]
 
 1.  dOut[B<sub>X</sub>, D] = ...
 2.  dW<sub>out</sub>[F, D] {U<sub>X</sub>} = Tmp[B<sub>X</sub>, F] \*<sub>B</sub> dOut[B<sub>X</sub>, D]
-3.  dW<sub>out</sub>[F, D] = **AllReduce**(dW<sub>out</sub>[F, D] {U<sub>X</sub>}) (*not on critical path, can be done async*)
+3.  dW<sub>out</sub>[F, D] = **AllReduce**(dW<sub>out</sub>[F, D] {U<sub>X</sub>}) (*不在关键路径上，可以异步执行*)
 4.  dTmp[B<sub>X</sub>, F] = dOut[B<sub>X</sub>, D] \*<sub>D</sub> W<sub>out</sub>[F, D]
 5.  dW<sub>in</sub>[D, F] {U<sub>X</sub>} = In[B<sub>X</sub>, D] \*<sub>B</sub> dTmp[B<sub>X</sub>, F]
-6.  dW<sub>in</sub>[D, F] = **AllReduce**(dW<sub>in</sub>[D, F] {U<sub>X</sub>}) (*not on critical path, can be done async*)
-7.  dIn[B<sub>X</sub>, D] = dTmp[B<sub>X</sub>, F] \*<sub>F</sub> W<sub>in</sub>[D, F] (*needed for previous layers*)
+6.  dW<sub>in</sub>[D, F] = **AllReduce**(dW<sub>in</sub>[D, F] {U<sub>X</sub>}) (*不在关键路径上，可以异步执行*)
+7.  dIn[B<sub>X</sub>, D] = dTmp[B<sub>X</sub>, F] \*<sub>F</sub> W<sub>in</sub>[D, F] (*前面的层需要用到*)
 
 </div>
 
-We ignore the details of the loss function and abbreviate $\text{Tmp} = W_\text{in} \cdot \text{In}$. Note that, although our final loss is the average **AllReduce**(Loss[B<sub>X</sub>]), we only need to compute the AllReduce on the backward pass when averaging weight gradients.
+我们忽略损失函数的细节，并简记 $\text{Tmp} = W_\text{in} \cdot \text{In}$。注意，虽然最终的损失是平均后的 **AllReduce**(Loss[B<sub>X</sub>])，但我们只需要在反向传播中对权重梯度求平均时执行 AllReduce。
 
 {% enddetails %}
 
-Note that the forward pass has no communication — **it's all in the backward pass**! The backward pass also has the great property that the AllReduces aren't in the "critical path", meaning that each AllReduce can be performed whenever it's convenient and doesn't block you from performing subsequent operations. The overall communication cost _can still bottleneck us_ if it exceeds our total compute cost, but it is much more forgiving from an implementation standpoint. We'll see that model/tensor parallelism doesn't have this property.
+注意，前向传播中没有任何通信——**通信全部发生在反向传播中**！反向传播还有一个很好的性质：这些 AllReduce 不在“关键路径”上，也就是说每个 AllReduce 都可以在任何方便的时候执行，不会阻塞后续操作。如果总通信开销超过了总计算开销，它*仍然可能成为我们的瓶颈*，但从实现的角度来看，这要宽松得多。我们会看到，模型并行 / 张量并行并不具备这一性质。
 
-**Why do this?** Pure data parallelism reduces activation memory pressure by splitting our activations over the batch dimension, allowing us to almost arbitrarily increase batch size as long as we have more chips to split the batch dimension over. Especially during training when our activations often dominate our memory usage, this is very helpful.
+**为什么要这样做？**纯数据并行通过在批维度上切分激活值来减轻激活值的内存压力，只要有更多芯片来切分批维度，我们几乎可以任意增大批大小。尤其是在训练期间，激活值往往占据了大部分内存，这一点非常有帮助。
 
-**Why not do this?** Pure data parallelism does nothing to reduce memory pressure from model parameters or optimizer states, which means pure data parallelism is rarely useful for interesting models at scale where our parameters + optimizer state don't fit in a single TPU. To give a sense of scale, if we train with parameters in bf16 and optimizer state in fp32 with Adam<d-footnote>Adam stores parameters, first order and second order accumulators. Since the params are in bfloat16 and optimizer state is in float32, this gives us `2 + 8 = 10` bytes per parameters.</d-footnote>, the largest model we can fit has $$\text{TPU memory} / 10$$ parameters, so e.g. on a TPUv5p chip with 96GB of HBM and pure data parallelism this is about 9B parameters.
+**为什么不这样做？**纯数据并行完全无法减轻模型参数或优化器状态带来的内存压力。这意味着，对于参数 + 优化器状态放不进单个 TPU 的、规模较大的有意义模型，纯数据并行很少有用武之地。为了给出一个量级上的直观感受：如果我们用 bf16 存储参数、用 fp32 存储优化器状态并使用 Adam 训练<d-footnote>Adam 需要存储参数以及一阶和二阶累加量。由于参数为 bfloat16、优化器状态为 float32，每个参数需要 `2 + 8 = 10` 字节。</d-footnote>，那么能放下的最大模型参数量为 $$\text{TPU memory} / 10$$，例如在一块拥有 96GB HBM 的 TPUv5p 芯片上使用纯数据并行，大约是 9B 参数。
 
-<p markdown=1 class="takeaway">**Takeaway**: the largest model we can train with Adam and pure data parallelism has $$\text{num_params} = \text{HBM per device} / 10$$. For TPU v5p this is roughly 9B parameters.<d-footnote>Note that this doesn't include gradient checkpoints, so this wouldn't actually be useful. This is an absolute lower bound with a batch of 1 token.</d-footnote></p>
+<p markdown=1 class="takeaway">**要点**：使用 Adam 和纯数据并行时，我们能训练的最大模型满足 $$\text{num_params} = \text{HBM per device} / 10$$。对于 TPU v5p，大约是 9B 参数。<d-footnote>注意，这里没有计入梯度检查点，因此实际上并不可用。这是在批大小仅为 1 个 token 时的绝对下界。</d-footnote></p>
 
-*To make this useful for real models during training, we'll need to at least partly shard the model parameters or optimizer.*
+*为了让它在训练真实模型时派上用场，我们至少需要对模型参数或优化器进行部分分片。*
 
-**When do we become bottlenecked by communication?** As we can see above, we have two AllReduces per layer, each of size $$2DF$$ (for bf16 weights). When does data parallelism make us communication bound?
+**我们什么时候会遇到通信瓶颈？**如上所示，每层有两次 AllReduce，每次的大小为 $$2DF$$（对于 bf16 权重）。那么数据并行什么时候会让我们变成通信受限呢？
 
-As in the table above, let $C$ = per-chip FLOPs, $W_{\text{ici}}$ = **bidirectional** network bandwidth, and $X$ = number of shards across which the batch is partitioned<d-footnote>We assume this partitioning is done over an ICI mesh, so the relevant network bandwidth is $W_\text{ici}$</d-footnote>.  Let's calculate the time required to perform the relevant matmuls, $$T_\text{math}$$, and the required communication time $$T_\text{comms}$$.  Since this parallelism scheme requires no communication in the forward pass, we only need to calculate these quantities for the backwards pass.
+与上表一样，令 $C$ = 每芯片 FLOPs，$W_{\text{ici}}$ = **双向**网络带宽，$X$ = 批被划分成的分片数<d-footnote>我们假设这一划分是在 ICI 网格上完成的，因此相关的网络带宽是 $W_\text{ici}$</d-footnote>。我们来计算执行相关矩阵乘法所需的时间 $$T_\text{math}$$，以及所需的通信时间 $$T_\text{comms}$$。由于这种并行方案在前向传播中不需要通信，我们只需要为反向传播计算这些量。
 
-*Communication time:*  From a previous section we know that the time required to perform an AllReduce in a 1D mesh depends only on the total bytes of the array being AllReduced and the ICI bandwidth $W_\text{ici}$; specifically the AllReduce time is $2 \cdot \text{total bytes} / W_\text{ici}$. Since we need to AllReduce for both $W_\text{in}$ and $W_\text{out}$, we have 2 AllReduces per layer.  Each AllReduce is for a weight matrix, i.e. an array of $DF$ parameters, or $2DF$ bytes. Putting this all together, the total time for the AllReduce in a single layer is
+*通信时间：*从前面的章节我们知道，在一维网格中执行一次 AllReduce 所需的时间只取决于被 AllReduce 的数组的总字节数以及 ICI 带宽 $W_\text{ici}$；具体来说，AllReduce 时间为 $2 \cdot \text{total bytes} / W_\text{ici}$。由于需要对 $W_\text{in}$ 和 $W_\text{out}$ 都做 AllReduce，每层有 2 次 AllReduce。每次 AllReduce 针对的是一个权重矩阵，即一个包含 $DF$ 个参数、也就是 $2DF$ 字节的数组。综合起来，单层中 AllReduce 的总时间为
 
 $$\begin{align}
 T_\text{comms} &= \frac{2 \cdot 2 \cdot 2 \cdot D \cdot F}{W_\text{ici}}. \\
 \end{align}$$
 
-*Matmul time:* Each layer comprises two matmuls in the forward pass, or four matmuls in the backwards pass, each of which requires $2(B/X)DF$ FLOPs. Thus, for a single layer in the backward pass, we have
+*矩阵乘法时间：*每层在前向传播中包含两次矩阵乘法，在反向传播中包含四次矩阵乘法，每次都需要 $2(B/X)DF$ FLOPs。因此，对于反向传播中的单层，我们有
 
 $$\begin{align}
 T_\text{math} &= \frac{2 \cdot 2 \cdot 2 \cdot B \cdot D \cdot F}{X \cdot C} \\
 \end{align}$$
 
-Since we overlap, the total time per layer is the max of these two quantities:
+由于两者是重叠的，每层的总时间就是这两个量中的较大值：
 
 $$\begin{aligned}
 T &\approx \max(\frac{8 \cdot B \cdot D \cdot F}{X \cdot C}, \frac{8 \cdot D \cdot F}{W_\text{ici}}) \\
 T &\approx 8 \cdot D \cdot F \cdot \max(\frac{B}{X \cdot C}, \frac{1}{W_\text{ici}})
 \end{aligned}$$
 
-We become compute-bound when $$T_\text{math}/T_\text{comms} > 1$$, or when
+当 $$T_\text{math}/T_\text{comms} > 1$$ 时，我们就是计算受限的，即当
 
 $$\begin{align}
 \frac{B}{X} > \frac{C}{W_\text{ici}}.
 \end{align}$$
 
-The upshot is that, to remain compute-bound with data parallelism, we need the per-device batch size $$B / X$$ to exceed the ICI operational intensity, $C / W_\text{ici}$. This is ultimately a consequence of the fact that the computation time scales with the per-device batch size, while the communication time is independent of this quantity (since we are transferring model weights). Note the resemblance of the $B/X > C/W_\text{ici}$ condition to the single-device compute-bound rule $B > 240$; in that case as well, the rule came from the fact that computation time scaled with batch size while data-transfer size was (in the $B \ll F, D$ regime) independent of batch size.
+结论是：要在数据并行下保持计算受限，每个设备上的批大小 $$B / X$$ 必须超过 ICI 运算强度 $C / W_\text{ici}$。归根结底，这是因为计算时间随每设备批大小增长，而通信时间与这个量无关（因为我们传输的是模型权重）。注意 $B/X > C/W_\text{ici}$ 这个条件与单设备计算受限规则 $B > 240$ 的相似之处；在那种情况下，这条规则同样源于计算时间随批大小增长、而数据传输量（在 $B \ll F, D$ 的情形下）与批大小无关这一事实。
 
-Let's put in some real numbers to get a sense of scale. For TPUv5p, `C=4.6e14` and `W=2 * 9e10` for 1D data parallelism over ICI, so **our batch size per chip must be at least 2,550 to avoid being communication-bound**. Since we can do data parallelism over multiple axes, if we dedicate all three axes of a TPUv5p pod to pure data parallelism, we 3x our bandwidth $W_\text{ici}$ and can scale down to only BS=850 per TPU or 7.6M tokens per batch per pod (of 8960 chips)! **This tells us that it's fairly hard to become bottlenecked by pure data parallelism!**
+我们代入一些真实数字来感受一下量级。对于 TPUv5p，在 ICI 上做一维数据并行时 `C=4.6e14`、`W=2 * 9e10`，因此**每个芯片上的批大小至少要达到 2,550，才能避免通信受限**。由于数据并行可以跨多条轴进行，如果我们把 TPUv5p Pod 的全部三条轴都用于纯数据并行，带宽 $W_\text{ici}$ 就会变为 3 倍，从而可以把每个 TPU 的批大小缩小到仅 BS=850，即每个 Pod（8960 个芯片）每批 7.6M 个 token！**这说明纯数据并行其实相当不容易成为瓶颈！**
 
-<p markdown=1 class="takeaway">**Note [context parallelism]:** Throughout this section, $B$ always refers to the total batch size **in tokens**. Clearly, however, our batch is made up of many different sequences, so how does this work? As far as the MLP is concerned, **tokens are tokens**! It doesn't matter if they belong to the same sequence or two different sequences. So we are more or less free to do data parallelism over both the batch and sequence dimension: we call this context parallelism or sequence parallelism, but you can think of it as simply being another kind of data parallelism. Attention is trickier than the MLP since we do some cross-sequence computation, but this can be handled by gathering KVs or Qs during attention and carefully overlapping FLOPs and comms (typically using something called "ring attention"). Throughout this section, we will just ignore our sequence dimension entirely and assume some amount of batch or sequence parallelism.</p>
+<p markdown=1 class="takeaway">**注意［上下文并行］：**在本节中，$B$ 始终指以 **token 为单位**的总批大小。但显然，我们的批是由许多不同的序列组成的，那这是怎么回事呢？对于 MLP 来说，**token 就是 token**！它们属于同一个序列还是两个不同的序列都无关紧要。因此，我们或多或少可以自由地同时在批维度和序列维度上做数据并行：我们称之为上下文并行或序列并行，但你可以把它简单地看作另一种数据并行。注意力比 MLP 要棘手一些，因为它涉及跨序列的计算，但这可以通过在注意力计算中 gather KV 或 Q，并小心地重叠 FLOPs 与通信来处理（通常使用一种叫做“ring attention”的方法）。在本节中，我们将完全忽略序列维度，并假设采用了一定程度的批并行或序列并行。</p>
 
-**Note on multiple mesh axes:** We should quickly note how multiple axes affects the available bandwidth. When we use multiple mesh axes for a given parallelism strategy, we get more bandwidth.
+**关于多条网格轴的说明：**这里简要说明一下多条轴如何影响可用带宽。当我们为某种并行策略使用多条网格轴时，就能获得更多带宽。
 
-* **Definition:** $M_X$ ($M_Y$, $M_Z$, etc.) is the number of hardware mesh axes that a given parallelism strategy spans. 
-* **Effect (bandwidth-bound):** Using $M$ axes provides ($\approx M$ times) aggregate link bandwidth, so collective time scales $\propto 1/M_X$.
+* **定义：**$M_X$（$M_Y$、$M_Z$ 等）是某种并行策略所跨越的硬件网格轴的数量。
+* **效果（带宽受限时）：**使用 $M$ 条轴可以提供（$\approx M$ 倍的）聚合链路带宽，因此集合通信时间按 $\propto 1/M_X$ 缩放。
 
-### Fully-Sharded Data Parallelism (FSDP)
+### 完全分片数据并行（FSDP） {#fully-sharded-data-parallelism-fsdp}
 
-**Syntax:** $$\text{In}[B_X, D] \cdot_D W_\text{in}[D_X, F] \cdot_F W_\text{out}[F, D_X] \rightarrow \text{Out}[B_X, D]$$
+**语法：** $$\text{In}[B_X, D] \cdot_D W_\text{in}[D_X, F] \cdot_F W_\text{out}[F, D_X] \rightarrow \text{Out}[B_X, D]$$
 
-Fully-sharded data parallelism (often called FSDP or ZeRO-sharding<d-cite key="zero"></d-cite>) splits the model optimizer states and weights across the data parallel shards and efficiently gathers and scatters them as needed. **Compared to pure data parallelism, FSDP drastically reduces per-device memory usage and saves on backward pass FLOPs, with very minimal overhead.**
+完全分片数据并行（通常称为 FSDP 或 ZeRO 分片<d-cite key="zero"></d-cite>）把模型的优化器状态和权重切分到各个数据并行分片上，并在需要时高效地对它们进行 gather 和 scatter。**与纯数据并行相比，FSDP 大幅降低了每个设备的内存占用，并节省了反向传播的 FLOPs，而额外开销极小。**
 
-{% include figure.liquid path="assets/img/fsdp.png" class="img-fluid" caption="<b>Figure:</b> FSDP shards the contracting dimension of Win and the output dimension of Wout along the data dimension. This reduces memory but (from Section 3) requires us to gather the weights for W before we perform the matmul. Note that the activations (left) <i>are not sharded along the contracting dimension</i>, which is what forces us to gather. <b>Note that our weight optimizer state is likewise sharded along the contracting dimension.</b>" %}
+{% include figure.liquid path="assets/img/fsdp.png" class="img-fluid" caption="<b>图：</b>FSDP 沿数据维度对 Win 的收缩维度和 Wout 的输出维度进行分片。这减少了内存占用，但（根据第 3 部分）要求我们在执行矩阵乘法之前先 gather 权重 W。注意，激活值（左）<i>没有沿收缩维度分片</i>，正是这一点迫使我们进行 gather。<b>注意，权重的优化器状态同样沿收缩维度分片。</b>" %}
 
-You'll remember (from [Section 3](../sharding)) that an AllReduce can be decomposed into an AllGather and a ReduceScatter. This means that, instead of doing the full gradient AllReduce for standard data parallelism, we can shard the weights and optimizer states across chips, AllGather them at each layer during the forward pass and ReduceScatter across the weights during the backward pass at no extra cost.
+你应该还记得（见[第 3 部分](../sharding)），一次 AllReduce 可以分解为一次 AllGather 和一次 ReduceScatter。这意味着，我们不必像标准数据并行那样对梯度做完整的 AllReduce，而是可以把权重和优化器状态分片到各个芯片上，在前向传播的每一层对它们做 AllGather，并在反向传播中对权重（梯度）做 ReduceScatter，且不产生额外开销。
 
-{% details Here's the full algorithm for FSDP. %}
+{% details 下面是 FSDP 的完整算法。 %}
 
 <div markdown=1 class="algorithm">
 
-**Fully-Sharded Data Parallelism (FSDP):**
+**完全分片数据并行（FSDP）：**
 
-**Forward pass:** need to compute Loss[B<sub>X</sub>]
+**前向传播：**需要计算 Loss[B<sub>X</sub>]
 
-1.  W<sub>in</sub>[D, F] = **AllGather**(W<sub>in</sub>[D<sub>X</sub>, F]) (*not on critical path, can do it during previous layer*)
-2.  Tmp[B<sub>X</sub>, F] = In[B<sub>X</sub>, D] \*<sub>D</sub> W<sub>in</sub>[D, F] (*can throw away W<sub>in</sub>[D, F] now*)
-3.  W<sub>out</sub>[F, D] = **AllGather**(W<sub>out</sub>[F, D<sub>X</sub>]) (*not on critical path, can do it during previous layer*)
+1.  W<sub>in</sub>[D, F] = **AllGather**(W<sub>in</sub>[D<sub>X</sub>, F]) (*不在关键路径上，可以在上一层期间完成*)
+2.  Tmp[B<sub>X</sub>, F] = In[B<sub>X</sub>, D] \*<sub>D</sub> W<sub>in</sub>[D, F] (*现在可以丢弃 W<sub>in</sub>[D, F]*)
+3.  W<sub>out</sub>[F, D] = **AllGather**(W<sub>out</sub>[F, D<sub>X</sub>]) (*不在关键路径上，可以在上一层期间完成*)
 4.  Out[B<sub>X</sub>, D] = Tmp[B<sub>X</sub>, F] \*<sub>F</sub> W<sub>out</sub>[F, D]
 5.  Loss[B<sub>X</sub>] = ...
 
-**Backward pass:** need to compute dW<sub>out</sub>[F, D<sub>X</sub>], dW<sub>in</sub>[D<sub>X</sub>, F]
+**反向传播：**需要计算 dW<sub>out</sub>[F, D<sub>X</sub>]、dW<sub>in</sub>[D<sub>X</sub>, F]
 
 1.  dOut[B<sub>X</sub>, D] = ...
 2.  dW<sub>out</sub>[F, D] {U<sub>X</sub>} = Tmp[B<sub>X</sub>, F] \*<sub>B</sub> dOut[B<sub>X</sub>, D]
-3.  dW<sub>out</sub>[F, D<sub>X</sub>] = **ReduceScatter**(dW<sub>out</sub>[F, D] {U<sub>X</sub>}) (*not on critical path, can be done async*)
-4.  W<sub>out</sub>[F, D] = **AllGather**(W<sub>out</sub>[F, D<sub>X</sub>]) (*can be done ahead of time*)
-5.  dTmp[B<sub>X</sub>, F] = dOut[B<sub>X</sub>, D] \*<sub>D</sub> W<sub>out</sub>[F, D] *(can throw away W<sub>out</sub>[F, D] here)*
+3.  dW<sub>out</sub>[F, D<sub>X</sub>] = **ReduceScatter**(dW<sub>out</sub>[F, D] {U<sub>X</sub>}) (*不在关键路径上，可以异步执行*)
+4.  W<sub>out</sub>[F, D] = **AllGather**(W<sub>out</sub>[F, D<sub>X</sub>]) (*可以提前完成*)
+5.  dTmp[B<sub>X</sub>, F] = dOut[B<sub>X</sub>, D] \*<sub>D</sub> W<sub>out</sub>[F, D] *(此处可以丢弃 W<sub>out</sub>[F, D])*
 6.  dW<sub>in</sub>[D,F] {U<sub>X</sub>} = In[B<sub>X</sub>, D] \*<sub>B</sub> dTmp[B<sub>X</sub>, F]
-7.  dW<sub>in</sub>[D<sub>X</sub>, F] = **ReduceScatter**(dW<sub>in</sub>[D, F] {U<sub>X</sub>}) *(not on critical path, can be done async)*
-8.  W<sub>in</sub>[D, F] = **AllGather**(W<sub>in</sub>[D<sub>X</sub>, F]) (*can be done ahead of time*)
-9.  dIn[B<sub>X</sub>, D] = dTmp[B<sub>X</sub>, F] \*<sub>F</sub> W<sub>in</sub>[D, F] (*needed for previous layers) (can throw away W<sub>in</sub>[D, F] here*)
+7.  dW<sub>in</sub>[D<sub>X</sub>, F] = **ReduceScatter**(dW<sub>in</sub>[D, F] {U<sub>X</sub>}) *(不在关键路径上，可以异步执行)*
+8.  W<sub>in</sub>[D, F] = **AllGather**(W<sub>in</sub>[D<sub>X</sub>, F]) (*可以提前完成*)
+9.  dIn[B<sub>X</sub>, D] = dTmp[B<sub>X</sub>, F] \*<sub>F</sub> W<sub>in</sub>[D, F] (*前面的层需要用到) (此处可以丢弃 W<sub>in</sub>[D, F]*)
 
 </div>
 
 {% enddetails %}
 
-This is also called "ZeRO Sharding", from "Zero Redundancy Optimizer" since we don't perform any unnecessary compute or store any unnecessary state. ZeRO-{1,2,3} are used to refer to sharding the optimizer states, gradients, and weights in this way, respectively. Since all have the same communication cost<d-footnote>Technically, FSDP adds communication in the forward pass that pure DP doesn't have, but this is in the same proportion as the backward pass so it should have no effect on the comms roofline. The key here is that ZeRO-3 turns a backward-pass AllReduce into an AllGather and a ReduceScatter, which have the same total comms volume.</d-footnote>, we can basically always do ZeRO-3 sharding, which shards the parameters, gradients, and optimizer states across a set of devices.
+这也被称为“ZeRO 分片”，得名于“Zero Redundancy Optimizer”（零冗余优化器），因为我们不执行任何不必要的计算，也不存储任何不必要的状态。ZeRO-{1,2,3} 分别指以这种方式对优化器状态、梯度和权重进行分片。由于它们的通信开销都相同<d-footnote>严格来说，FSDP 在前向传播中增加了纯数据并行所没有的通信，但其比例与反向传播相同，因此不应影响通信 Roofline。这里的关键在于，ZeRO-3 把反向传播中的一次 AllReduce 变成了一次 AllGather 加一次 ReduceScatter，两者的总通信量相同。</d-footnote>，我们基本上总是可以采用 ZeRO-3 分片，即把参数、梯度和优化器状态都分片到一组设备上。
 
-**Why would we do this?** Standard data parallelism involves a lot of duplicated work. Each TPU AllReduces the full gradient, then updates the full optimizer state (identical work on all TPUs), then updates the parameters (again, fully duplicated). For ZeRO sharding (sharding the gradients/optimizer state), instead of an AllReduce, you can ReduceScatter the gradients, update only your shard of the optimizer state, update a shard of the parameters, then AllGather the parameters as needed for your forward pass.
+**为什么要这样做？**标准数据并行涉及大量重复工作。每个 TPU 都要对完整的梯度做 AllReduce，然后更新完整的优化器状态（所有 TPU 上的工作完全相同），再更新参数（同样完全重复）。而对于 ZeRO 分片（对梯度 / 优化器状态进行分片），你可以不做 AllReduce，而是对梯度做 ReduceScatter，只更新属于自己的那一份优化器状态分片，更新一份参数分片，然后在前向传播需要时再对参数做 AllGather。
 
-**When do we become bottlenecked by communication?** Our relative FLOPs and comms costs are exactly the same as pure data parallelism, since each AllReduce in the backward pass has become an AllGather + ReduceScatter. Recall that an AllReduce is implemented as an AllGather and a ReduceScatter, each with half the cost. Here we model the forward pass since it has the same FLOPs-to-comms ratio as the backward pass:
+**我们什么时候会遇到通信瓶颈？**我们的相对 FLOPs 开销和通信开销与纯数据并行完全相同，因为反向传播中的每次 AllReduce 都变成了 AllGather + ReduceScatter。回想一下，AllReduce 本身就是用一次 AllGather 和一次 ReduceScatter 实现的，两者各占一半的开销。这里我们对前向传播建模，因为它的 FLOPs 与通信之比和反向传播相同：
 
 $$\begin{aligned}
 T_\text{math} &= \frac{2 \cdot 2 \cdot B \cdot D \cdot F}{X \cdot C} \\
@@ -295,58 +306,58 @@ T &\approx \max\left(\frac{4 \cdot B \cdot D \cdot F}{X \cdot C}, \frac{4 \cdot 
 T &\approx 4 \cdot D \cdot F \cdot \max\left(\frac{B}{X \cdot C}, \frac{1}{W_\text{ici}}\right)
 \end{aligned}$$
 
-Therefore, as with pure data-parallelism, we are compute bound when $$B / X > C / W_\text{ici}$$, i.e. when the per-device batch size $B/X$ exceeds the "ICI operational intensity" $C/W_\text{ici}$ (`4.59e14 / 1.8e11 = 2550` for v5p). This is great for us, because it means if our per-device batch size is big enough to be compute-bound for pure data-parallelism, we can — without worrying about leaving the compute-bound regime — simply upgrade to FSDP, saving ourselves a massive amount of parameter and optimizer state memory!  Though we did have to add communication to the forward pass, this cost is immaterial since it just overlaps with forward-pass FLOPs.
+因此，与纯数据并行一样，当 $$B / X > C / W_\text{ici}$$ 时我们是计算受限的，即每设备批大小 $B/X$ 超过“ICI 运算强度” $C/W_\text{ici}$（对于 v5p 为 `4.59e14 / 1.8e11 = 2550`）。这对我们来说是个好消息：这意味着，如果每设备批大小已经大到足以让纯数据并行保持计算受限，那么我们就可以直接升级到 FSDP——无需担心脱离计算受限区间——从而节省大量的参数和优化器状态内存！虽然我们确实需要在前向传播中增加通信，但这一开销无关紧要，因为它恰好可以与前向传播的 FLOPs 重叠。
 
-<p markdown=1 class="takeaway">**Takeaway:** Both FSDP and pure Data Parallelism become bandwidth bound on TPUv5 when the batch size per device is less than $2550 / M_X$, where $M_X$ is the number of mesh axes.</p>
+<p markdown=1 class="takeaway">**要点：**在 TPUv5 上，当每设备批大小小于 $2550 / M_X$ 时（其中 $M_X$ 是网格轴的数量），FSDP 和纯数据并行都会变成带宽受限。</p>
 
-For example, DeepSeek-V2 (one of the only recent strong models to release information about its training batch size) used a batch size of ~40M tokens. **This would allow us to scale to roughly 47,000 chips, or around 5 TPUv5 pods, before we hit a bandwidth limit.**
+例如，DeepSeek-V2（近期为数不多公开了训练批大小信息的强模型之一）使用了约 40M token 的批大小。**这样的批大小可以让我们扩展到大约 47,000 个芯片，也就是大约 5 个 TPUv5 Pod，才会遇到带宽限制。**
 
-For LLaMA-3 70B, which was trained for approximately `6.3e24 (15e12 * 70e9 * 6)` FLOPs, we could split a batch of 16M tokens over roughly `16e6 / (2550 / 3) = 18,823` chips (roughly 2 pods of 8960 chips), each with `4.59e14` FLOPs running at 50% peak FLOPs utilization (often called MFU), and **train it in approximately 17 days**. Not bad! But let's explore how we can do better.
+对于 LLaMA-3 70B，其训练大约用了 `6.3e24 (15e12 * 70e9 * 6)` FLOPs，我们可以把一个 16M token 的批切分到大约 `16e6 / (2550 / 3) = 18,823` 个芯片上（大约 2 个 8960 芯片的 Pod），每个芯片提供 `4.59e14` FLOPs，并以 50% 的峰值 FLOPs 利用率（通常称为 MFU）运行，这样**大约 17 天就能完成训练**。还不错！不过，我们来看看如何做得更好。
 
-<p markdown=1 class="takeaway">**Note on critical batch size**: somewhat unintuitively, we become more communication bottlenecked as our total batch size decreases (with fixed chip number). Data parallelism and FSDP let us scale to arbitrarily many chips so long as we can keep increasing our batch size! However, in practice, as our batch size increases, we tend to see diminishing returns in training since our gradients become almost noise-free. We also sometimes see training instability. Thus, the game of finding an optimal sharding scheme in the "unlimited compute regime" often starts from a fixed batch size, determined by scaling laws, and a known (large) number of chips, and then aims to find a partitioning that allows us to fit that small batch size on so many chips.</p>
+<p markdown=1 class="takeaway">**关于临界批大小的说明**：有些反直觉的是，（在芯片数量固定时）总批大小越小，我们就越容易受到通信瓶颈的限制。只要能不断增大批大小，数据并行和 FSDP 就能让我们扩展到任意多的芯片！然而在实践中，随着批大小增大，训练收益往往会递减，因为梯度几乎已经没有噪声了。有时我们还会看到训练不稳定。因此，在“无限算力情形”下寻找最优分片方案这件事，通常从一个由 scaling law 决定的固定批大小和一个已知的（很大的）芯片数量出发，目标是找到一种划分方式，使这个较小的批大小能够分布到如此多的芯片上。</p>
 
-### Tensor Parallelism
+### 张量并行 {#tensor-parallelism}
 
-**Syntax:** $$\text{In}[B, D_Y] \cdot_D W_\text{in}[D, F_Y] \cdot_F W_\text{out}[F_Y, D] \rightarrow \text{Out}[B, D_Y]$$ (we use $$Y$$ to eventually combine with FSDP)
+**记法：** $$\text{In}[B, D_Y] \cdot_D W_\text{in}[D, F_Y] \cdot_F W_\text{out}[F_Y, D] \rightarrow \text{Out}[B, D_Y]$$（我们使用 $$Y$$，是为了之后与 FSDP 结合）
 
-In a fully-sharded data-parallel AllReduce we move the weights across chips. We can also shard the feedforward dimension of the model and move the activations during the layer — this is called "1D model parallelism" or Megatron sharding<d-cite key="megatron"></d-cite>. This can unlock a smaller efficient batch size per pod. The figure below shows an example of a single matrix sharded in this way:
+在完全分片数据并行的 AllReduce 中，我们在芯片之间移动的是权重。我们也可以对模型的前馈维度进行分片，并在层的计算过程中移动激活值——这被称为“一维模型并行”或 Megatron 分片<d-cite key="megatron"></d-cite>。这可以让每个 Pod 在更小的批大小下也能高效运行。下图展示了以这种方式分片的单个矩阵的示例：
 
-{% include figure.liquid path="assets/img/model-parallelism.png" class="img-fluid" caption="<b>Figure:</b> an example of basic tensor parallelism. Since we're only sharding our activations over Y (unlike in FSDP where we shard over X), we replicate our activations over X. Using our standard syntax, this is <b>A</b>[B, D<sub>Y</sub>] * <b>B</b>[D, F<sub>Y</sub>] -> <b>C</b>[B, F<sub>Y</sub>]. Because we're only sharding over one of the contracting dimensions, we typically AllGather the activations <b>A</b> before the matmul." %}
+{% include figure.liquid path="assets/img/model-parallelism.png" class="img-fluid" caption="<b>图：</b>基本张量并行的示例。由于我们只在 Y 上对激活值进行分片（不同于 FSDP 中在 X 上分片），我们会在 X 上复制激活值。用我们的标准记法，这就是 <b>A</b>[B, D<sub>Y</sub>] * <b>B</b>[D, F<sub>Y</sub>] -> <b>C</b>[B, F<sub>Y</sub>]。由于我们只对其中一个收缩维度进行了分片，通常会在矩阵乘法之前对激活值 <b>A</b> 做 AllGather。" %}
 
-As noted, **In\[B, D<sub>Y</sub>\] \*<sub>D</sub> W<sub>in</sub>\[D, F<sub>Y</sub>\] \*<sub>F</sub> W<sub>out</sub>\[F<sub>Y</sub>, D\] \-\> Out\[B, D<sub>Y</sub>\] means we have to gather our activations before the first matmul. This is cheaper than ZeRO sharding when the activations are smaller than the weights.** This is typically true only with some amount of ZeRO sharding added (which reduces the size of the gather). This is one of the reasons we tend to mix ZeRO sharding and tensor parallelism.
+如前所述，**In\[B, D<sub>Y</sub>\] \*<sub>D</sub> W<sub>in</sub>\[D, F<sub>Y</sub>\] \*<sub>F</sub> W<sub>out</sub>\[F<sub>Y</sub>, D\] \-\> Out\[B, D<sub>Y</sub>\] 意味着我们必须在第一次矩阵乘法之前收集（gather）激活值。当激活值比权重小时，这比 ZeRO 分片更便宜。** 通常只有在额外加入一定程度的 ZeRO 分片（这会减小 gather 的规模）时才是如此。这也是我们倾向于把 ZeRO 分片和张量并行混合使用的原因之一。
 
-{% details Here's the algorithm for tensor parallelism! %}
+{% details 这是张量并行的算法！ %}
 
 <div markdown=1 class="algorithm">
 
-**Tensor Parallelism:**
+**张量并行：**
 
-**Forward pass:** need to compute Loss[B]
+**前向传播：** 需要计算 Loss[B]
 
-1.  In[B, D] = **AllGather**(In[B, D<sub>Y</sub>]) *(on critical path)*
-2.  Tmp[B, F<sub>Y</sub>] = In[B, D] \*<sub>D</sub> W<sub>in</sub>[D, F<sub>Y</sub>] *(not sharded along contracting, so no comms)*
+1.  In[B, D] = **AllGather**(In[B, D<sub>Y</sub>]) *（位于关键路径上）*
+2.  Tmp[B, F<sub>Y</sub>] = In[B, D] \*<sub>D</sub> W<sub>in</sub>[D, F<sub>Y</sub>] *（未沿收缩维度分片，因此无需通信）*
 3.  Out[B, D] {U<sub>Y</sub>} = Tmp[B, F<sub>Y</sub>] \*<sub>F</sub> W<sub>out</sub>[F<sub>Y</sub>, D]
-4.  Out[B, D<sub>Y</sub>] = **ReduceScatter**(Out[B, D] {U<sub>Y</sub>}) *(on critical path)*
+4.  Out[B, D<sub>Y</sub>] = **ReduceScatter**(Out[B, D] {U<sub>Y</sub>}) *（位于关键路径上）*
 5.  Loss[B] = ...
 
-**Backward pass:** need to compute dW<sub>out</sub>[F<sub>Y</sub>, D], dW<sub>in</sub>[D, F<sub>Y</sub>]
+**反向传播：** 需要计算 dW<sub>out</sub>[F<sub>Y</sub>, D] 和 dW<sub>in</sub>[D, F<sub>Y</sub>]
 
 1.  dOut[B, D<sub>Y</sub>] = ...
-2.  dOut[B, D] = **AllGather**(dOut[B, D<sub>Y</sub>]) *(on critical path)*
+2.  dOut[B, D] = **AllGather**(dOut[B, D<sub>Y</sub>]) *（位于关键路径上）*
 3.  dW<sub>out</sub>[F<sub>Y</sub>, D] = Tmp[B, F<sub>Y</sub>] \*<sub>B</sub> dOut[B, D]
-4.  dTmp[B, F<sub>Y</sub>] = dOut[B, D] \*<sub>D</sub> W<sub>out</sub>[F<sub>Y</sub>, D] *(can throw away dOut[B, D] here)*
-5.  In[B, D] = **AllGather**(In[B, D<sub>Y</sub>]) *(this can be skipped by sharing with (1) from the forward pass)*
+4.  dTmp[B, F<sub>Y</sub>] = dOut[B, D] \*<sub>D</sub> W<sub>out</sub>[F<sub>Y</sub>, D] *（此处可以丢弃 dOut[B, D]）*
+5.  In[B, D] = **AllGather**(In[B, D<sub>Y</sub>]) *（可与前向传播中的第 (1) 步共享，从而跳过这一步）*
 6.  dW<sub>in</sub>[D, F<sub>Y</sub>] = In[B, D] \*<sub>B</sub> dTmp[B, F<sub>Y</sub>]
-7.  dIn[B, D] {U<sub>Y</sub>} = dTmp[B, F<sub>Y</sub>] \*<sub>F</sub> W<sub>in</sub>[D, F<sub>Y</sub>] *(needed for previous layers)*
-8.  dIn[B, D<sub>Y</sub>] = **ReduceScatter**(dIn[B, D] {U<sub>Y</sub>}) *(on critical path)*
+7.  dIn[B, D] {U<sub>Y</sub>} = dTmp[B, F<sub>Y</sub>] \*<sub>F</sub> W<sub>in</sub>[D, F<sub>Y</sub>] *（前面的层需要用到）*
+8.  dIn[B, D<sub>Y</sub>] = **ReduceScatter**(dIn[B, D] {U<sub>Y</sub>}) *（位于关键路径上）*
 
 </div>
 
 {% enddetails %}
 
-One nice thing about tensor parallelism is that it interacts nicely with the two matrices in our Transformer forward pass. Naively, we would do an AllReduce after each of the two matrices. But here we first do **In[B, D<sub>Y</sub>] \* W<sub>in</sub>[D, F<sub>Y</sub>] -> Tmp[B, F<sub>Y</sub>]** and then **Tmp[B, F<sub>Y</sub>] \* W<sub>out</sub>[F<sub>Y</sub>, D] -> Out[B, D<sub>Y</sub>]**. This means we AllGather **In** at the beginning, and ReduceScatter **Out** at the end, rather than doing an AllReduce.
+张量并行的一个好处是，它能与 Transformer 前向传播中的两个矩阵很好地配合。朴素的做法是在两个矩阵乘法之后各做一次 AllReduce。但在这里，我们先做 **In[B, D<sub>Y</sub>] \* W<sub>in</sub>[D, F<sub>Y</sub>] -> Tmp[B, F<sub>Y</sub>]**，然后做 **Tmp[B, F<sub>Y</sub>] \* W<sub>out</sub>[F<sub>Y</sub>, D] -> Out[B, D<sub>Y</sub>]**。这意味着我们在开始时对 **In** 做 AllGather，在结束时对 **Out** 做 ReduceScatter，而不是做 AllReduce。
 
-**How costly is this?** Let's only model the forward pass - the backwards pass is just the transpose of each operation here. In 1D tensor parallelism we AllGather the activations before the first matmul, and ReduceScatter them after the second, sending two bytes at a time (bf16). Let's figure out when we're bottlenecked by communication.
+**这样做的开销有多大？** 我们只对前向传播建模——反向传播只是这里每个操作的转置。在一维张量并行中，我们在第一次矩阵乘法之前对激活值做 AllGather，在第二次矩阵乘法之后对其做 ReduceScatter，每个元素发送两个字节（bf16）。我们来算一算什么时候会被通信拖成瓶颈。
 
 $$\begin{align}
 T_\text{math} & = \frac{4 \cdot B \cdot D \cdot F}{Y \cdot C} \\
@@ -355,7 +366,7 @@ T_\text{comms} & =
 \textnormal{T} & \approx \max \left(\frac{4 \cdot B \cdot D \cdot F}{Y \cdot C}, \frac{2 \cdot 2 \cdot (B \cdot D)}{W_\text{ici}}\right)
 \end{align}$$
 
-Noting that we want compute cost to be greater than comms cost, we get:
+由于我们希望计算开销大于通信开销，可得：
 
 $$\begin{align}
 \frac{4 \cdot B \cdot D \cdot F}{Y \cdot C} > \frac{2 \cdot 2 \cdot (B \cdot D)}{W_\text{ici}}
@@ -369,154 +380,154 @@ $$\begin{align}
 F > Y \cdot \frac{C}{W_\text{ici}}
 \end{align}$$
 
-Thus for instance, for TPUv5p, $C / W_{ici} = 2550$ in bf16, so we can only do tensor parallelism up to $Y < F / 2550$. When we have multiple ICI axes, our $T_\text{comms}$ is reduced by a factor of $M_Y$, so we get $Y < M_Y \cdot F / 2550$.
+因此，以 TPUv5p 为例，在 bf16 下 $C / W_{ici} = 2550$，所以张量并行最多只能做到 $Y < F / 2550$。当我们有多个 ICI 轴时，$T_\text{comms}$ 会缩小为原来的 $M_Y$ 分之一，于是得到 $Y < M_Y \cdot F / 2550$。
 
-<p markdown=1 class="takeaway">**Takeaway**: Tensor Parallelism becomes communication bound when $Y > M_Y \cdot F / 2550$. For most models this is between 8 and 16-way tensor parallelism.</p>
+<p markdown=1 class="takeaway">**要点**：当 $Y > M_Y \cdot F / 2550$ 时，张量并行会变成通信受限。对大多数模型来说，这个上限在 8 路到 16 路张量并行之间。</p>
 
-**Note that this doesn't depend on the precision of the computation**, since e.g. for int8, on TPUv5p, $$C_\text{int8} / W_{ici}$$ is $$5100$$ instead of $$2550$$ but the comms volume is also halved, so the two factors of two cancel.
+**注意，这与计算精度无关**，例如对于 int8，在 TPUv5p 上 $$C_\text{int8} / W_{ici}$$ 是 $$5100$$ 而不是 $$2550$$，但通信量也减半了，所以这两个 2 倍的因子相互抵消。
 
-**Let's think about some examples:**
+**来看几个例子：**
 
-* On TPUv5p with LLaMA 3-70B with $$D = 8192,$$ $$F \approx 30,000$$, we can comfortably do 8-way tensor parallelism, but will be communication bound on 16 way tensor parallelism. The required F for 8-way model sharding is 20k.
+* 在 TPUv5p 上，对于 $$D = 8192,$$ $$F \approx 30,000$$ 的 LLaMA 3-70B，我们可以轻松地做 8 路张量并行，但做 16 路张量并行时就会通信受限。8 路模型分片所需的 F 为 20k。
 
-* For Gemma 7B, $$F \approx 50k$$, so we become communication bound with 19-way tensor parallelism. That means we could likely do 16-way and still see good performance.
+* 对于 Gemma 7B，$$F \approx 50k$$，因此在 19 路张量并行时会变成通信受限。这意味着我们大概可以做 16 路张量并行，并仍然获得不错的性能。
 
-### Combining FSDP and Tensor Parallelism
+### 结合 FSDP 与张量并行 {#combining-fsdp-and-tensor-parallelism}
 
-**Syntax:** $$\text{In}[B_X, D_Y] \cdot_D W_\text{in}[D_X, F_Y] \cdot_F W_\text{out}[F_Y, D_X] \rightarrow \text{Out}[B_X, D_Y]$$
+**记法：** $$\text{In}[B_X, D_Y] \cdot_D W_\text{in}[D_X, F_Y] \cdot_F W_\text{out}[F_Y, D_X] \rightarrow \text{Out}[B_X, D_Y]$$
 
-The nice thing about FSDP and tensor parallelism is that they can be combined. By sharding **W<sub>in</sub>** and **W<sub>out</sub>** along both axes we both save memory and compute. Because we shard B along X, we reduce the size of the model-parallel AllGathers, and because we shard F along Y, we reduce the communication overhead of FSDP. This means a combination of the two can get us to an even lower effective batch size than we saw above.
+FSDP 和张量并行的好处在于它们可以结合使用。通过沿两个轴对 **W<sub>in</sub>** 和 **W<sub>out</sub>** 进行分片，我们既节省了内存，也节省了计算。由于我们沿 X 对 B 分片，模型并行 AllGather 的规模减小了；又由于我们沿 Y 对 F 分片，FSDP 的通信开销也降低了。这意味着两者结合可以让我们达到比上面更低的有效批大小。
 
-{% include figure.liquid path="assets/img/mixed-fsdp-model-parallelism.png" class="img-fluid" caption="<b>Figure:</b> a diagram combining FSDP and tensor parallelism. Unlike the other cases, there is no duplication of model parameters." %}
+{% include figure.liquid path="assets/img/mixed-fsdp-model-parallelism.png" class="img-fluid" caption="<b>图：</b>结合 FSDP 与张量并行的示意图。与其他情形不同，这里模型参数没有任何重复。" %}
 
-{% details Here's the full algorithm for mixed FSDP + tensor parallelism. While we have a lot of communication, all our AllGathers and ReduceScatters are smaller because we have batch-sharded our activations and tensor sharded our weights much more! %}
+{% details 下面是 FSDP + 张量并行混合方案的完整算法。虽然通信很多，但由于我们对激活值做了批维度分片，并对权重做了更多的张量分片，所有 AllGather 和 ReduceScatter 的规模都更小了！ %}
 
 <div markdown=1 class="algorithm">
 
-**Forward pass:** need to compute Loss[B]
+**前向传播：** 需要计算 Loss[B]
 
-1.  In[B<sub>X</sub>, D] = **AllGather**<sub>Y</sub>(In[B<sub>X</sub>, D<sub>Y</sub>]) *(on critical path)*
-2.  W<sub>in</sub>[D, F<sub>Y</sub>] = **AllGather**<sub>X</sub>(W<sub>in</sub>[D<sub>X</sub>, F<sub>Y</sub>]) *(can be done ahead of time)*
+1.  In[B<sub>X</sub>, D] = **AllGather**<sub>Y</sub>(In[B<sub>X</sub>, D<sub>Y</sub>]) *（位于关键路径上）*
+2.  W<sub>in</sub>[D, F<sub>Y</sub>] = **AllGather**<sub>X</sub>(W<sub>in</sub>[D<sub>X</sub>, F<sub>Y</sub>]) *（可以提前完成）*
 3.  Tmp[B<sub>X</sub>, F<sub>Y</sub>] = In[B<sub>X</sub>, D] \*<sub>D</sub> W<sub>in</sub>[D, F<sub>Y</sub>]
-4.  W<sub>out</sub>[F<sub>Y</sub>, D] = **AllGather**<sub>X</sub>(W<sub>out</sub>[F<sub>Y</sub>, D<sub>X</sub>]) *(can be done ahead of time)*
+4.  W<sub>out</sub>[F<sub>Y</sub>, D] = **AllGather**<sub>X</sub>(W<sub>out</sub>[F<sub>Y</sub>, D<sub>X</sub>]) *（可以提前完成）*
 5.  Out[B<sub>X</sub>, D] {U<sub>Y</sub>} = Tmp[B<sub>X</sub>, F<sub>Y</sub>] \*<sub>F</sub> W<sub>out</sub>[F<sub>Y</sub>, D]
-6.  Out[B<sub>X</sub>, D<sub>Y</sub>] = **ReduceScatter**<sub>Y</sub>(Out[B<sub>X</sub>, D] {U<sub>Y</sub>}) *(on critical path)*
+6.  Out[B<sub>X</sub>, D<sub>Y</sub>] = **ReduceScatter**<sub>Y</sub>(Out[B<sub>X</sub>, D] {U<sub>Y</sub>}) *（位于关键路径上）*
 7.  Loss[B<sub>X</sub>] = ...
 
-**Backward pass:** need to compute dW<sub>out</sub>[F<sub>Y</sub>, D<sub>X</sub>], dW<sub>in</sub>[D<sub>X</sub>, F<sub>Y</sub>]
+**反向传播：** 需要计算 dW<sub>out</sub>[F<sub>Y</sub>, D<sub>X</sub>] 和 dW<sub>in</sub>[D<sub>X</sub>, F<sub>Y</sub>]
 
 1.  dOut[B<sub>X</sub>, D<sub>Y</sub>] = ...
-2.  dOut[B<sub>X</sub>, D] = **AllGather**<sub>Y</sub>(dOut[B<sub>X</sub>, D<sub>Y</sub>]) *(on critical path)*
+2.  dOut[B<sub>X</sub>, D] = **AllGather**<sub>Y</sub>(dOut[B<sub>X</sub>, D<sub>Y</sub>]) *（位于关键路径上）*
 3.  dW<sub>out</sub>[F<sub>Y</sub>, D] {U<sub>X</sub>} = Tmp[B<sub>X</sub>, F<sub>Y</sub>] \*<sub>B</sub> dOut[B<sub>X</sub>, D]
 4.  dW<sub>out</sub>[F<sub>Y</sub>, D<sub>X</sub>] = **ReduceScatter**<sub>X</sub>(dW<sub>out</sub>[F<sub>Y</sub>, D] {U<sub>X</sub>})
-5.  W<sub>out</sub>[F<sub>Y</sub>, D] = **AllGather**<sub>X</sub>(W<sub>out</sub>[F<sub>Y</sub>, D<sub>X</sub>]) *(can be done ahead of time)*
-6.  dTmp[B<sub>X</sub>, F<sub>Y</sub>] = dOut[B<sub>X</sub>, D] \*<sub>D</sub> W<sub>out</sub>[F<sub>Y</sub>, D] *(can throw away dOut[B, D] here)*
-7. In[B<sub>X</sub>, D] = **AllGather**<sub>Y</sub>(In[B<sub>X</sub>, D<sub>Y</sub>]) *(not on critical path + this can be shared with (2) from the previous layer)*
+5.  W<sub>out</sub>[F<sub>Y</sub>, D] = **AllGather**<sub>X</sub>(W<sub>out</sub>[F<sub>Y</sub>, D<sub>X</sub>]) *（可以提前完成）*
+6.  dTmp[B<sub>X</sub>, F<sub>Y</sub>] = dOut[B<sub>X</sub>, D] \*<sub>D</sub> W<sub>out</sub>[F<sub>Y</sub>, D] *（此处可以丢弃 dOut[B, D]）*
+7. In[B<sub>X</sub>, D] = **AllGather**<sub>Y</sub>(In[B<sub>X</sub>, D<sub>Y</sub>]) *（不在关键路径上，且可与上一层的第 (2) 步共享）*
 8.  dW<sub>in</sub>[D, F<sub>Y</sub>] {U<sub>X</sub>} = In[B<sub>X</sub>, D] \*<sub>B</sub> dTmp[B<sub>X</sub>, F<sub>Y</sub>]
 9.  dW<sub>in</sub>[D<sub>X</sub>, F<sub>Y</sub>] = **ReduceScatter**<sub>X</sub>(dW<sub>in</sub>[D, F<sub>Y</sub>] {U<sub>X</sub>})
-10. W<sub>in</sub>[D, F<sub>Y</sub>] = **AllGather**<sub>X</sub>(W<sub>in</sub>[D<sub>X</sub>, F<sub>Y</sub>]) *(can be done ahead of time)*
-11. dIn[B<sub>X</sub>, D] {U<sub>Y</sub>} = dTmp[B<sub>X</sub>, F<sub>Y</sub>] \*<sub>F</sub> W<sub>in</sub>[D, F<sub>Y</sub>] *(needed for previous layers)*
-12. dIn[B<sub>X</sub>, D<sub>Y</sub>] = **ReduceScatter**<sub>Y</sub>(dIn[B<sub>X</sub>, D] {U<sub>Y</sub>}) *(on critical path)*
+10. W<sub>in</sub>[D, F<sub>Y</sub>] = **AllGather**<sub>X</sub>(W<sub>in</sub>[D<sub>X</sub>, F<sub>Y</sub>]) *（可以提前完成）*
+11. dIn[B<sub>X</sub>, D] {U<sub>Y</sub>} = dTmp[B<sub>X</sub>, F<sub>Y</sub>] \*<sub>F</sub> W<sub>in</sub>[D, F<sub>Y</sub>] *（前面的层需要用到）*
+12. dIn[B<sub>X</sub>, D<sub>Y</sub>] = **ReduceScatter**<sub>Y</sub>(dIn[B<sub>X</sub>, D] {U<sub>Y</sub>}) *（位于关键路径上）*
 
 </div>
 
 {% enddetails %}
 
-**What's the right combination of FSDP and TP?** A simple but key maxim is that FSDP moves weights and tensor parallelism moves activations. That means as our batch size shrinks (especially as we do more data parallelism), tensor parallelism becomes cheaper because our activations per-shard are smaller.
+**FSDP 和 TP 的正确组合是什么？** 一条简单但关键的准则是：FSDP 移动权重，而张量并行移动激活值。这意味着随着批大小缩小（尤其是当我们做更多数据并行时），张量并行会变得更便宜，因为每个分片上的激活值更小。
 
-* Tensor parallelism performs $$\mathbf{AllGather}_Y([B_X, D_Y])$$ which shrinks as $$X$$ grows.
-* FSDP performs $$\mathbf{AllGather}_X([D_X, F_Y])$$ which shrinks as $$Y$$ grows.
+* 张量并行执行 $$\mathbf{AllGather}_Y([B_X, D_Y])$$，其规模随 $$X$$ 增大而缩小。
+* FSDP 执行 $$\mathbf{AllGather}_X([D_X, F_Y])$$，其规模随 $$Y$$ 增大而缩小。
 
-Thus by combining both we can push our minimum batch size per replica down even more. We can calculate the optimal amount of FSDP and TP in the same way as above:
+因此，将两者结合可以把每个副本的最小批大小进一步压低。我们可以用与上面相同的方法计算 FSDP 和 TP 的最优规模：
 
-Let $$X$$ be the number of chips dedicated to FSDP and $$Y$$ be the number of chips dedicated to tensor parallelism. Let $$N$$ be the total number of chips in our slice with $$N=XY$$. Let $$M_X$$ and $$M_Y$$ be the number of mesh axes over which we do FSDP and TP respectively (these should roughly sum to 3). We'll purely model the forward pass since it has the most communication per FLOP. Then adding up the comms in the algorithm above, we have
+令 $$X$$ 为用于 FSDP 的芯片数，$$Y$$ 为用于张量并行的芯片数。令 $$N$$ 为切片中的芯片总数，$$N=XY$$。令 $$M_X$$ 和 $$M_Y$$ 分别为进行 FSDP 和 TP 的网格轴数量（二者之和大致应为 3）。我们只对前向传播建模，因为它每个 FLOP 对应的通信量最大。把上面算法中的通信加起来，我们有
 
 $$T_\text{FSDP comms}(B, X, Y) = \frac{2\cdot 2\cdot D \cdot F}{Y \cdot W_\text{ici} \cdot M_X}$$
 
 $$T_\text{TP comms}(B, X, Y) = \frac{2 \cdot 2 \cdot B \cdot D}{X \cdot W_\text{ici} \cdot M_Y}$$
 
-And likewise our total FLOPs time is
+同样，总的 FLOPs 时间为
 
 $$T_\text{math} = \frac{2\cdot 2 \cdot B \cdot D \cdot F}{N \cdot C}.$$
 
-To simplify the analysis, we make two assumptions: first, we allow $X$ and $Y$ to take on non-integer values (as long as they are positive and satisfy $XY=N$); second, we assume that we can fully overlap comms on the $X$ and $Y$ axis with each other. Under the second assumption, the total comms time is
+为了简化分析，我们做两个假设：第一，允许 $X$ 和 $Y$ 取非整数值（只要它们为正且满足 $XY=N$）；第二，假设 $X$ 轴和 $Y$ 轴上的通信可以完全相互重叠。在第二个假设下，总通信时间为
 
 $$T_\text{comms} = \max\left(T_\text{FSDP comms}, T_\text{TP comms}\right)$$
 
-Before we ask under what conditions we'll be compute-bound, let's find the optimal values for $X$ and $Y$ to minimize our total communication. Since our FLOPs is independent of $X$ and $Y$, the optimal settings are those that simply minimize comms. To do this, let's write $T_\text{comms}$ above in terms of $X$ and $N$ (which is held fixed, as it's the number of chips in our system) rather than $X$ and $Y$:
+在探讨什么条件下会计算受限之前，我们先求出使总通信量最小的 $X$ 和 $Y$ 的最优值。由于 FLOPs 与 $X$ 和 $Y$ 无关，最优设置就是让通信最小的那个设置。为此，我们把上面的 $T_\text{comms}$ 用 $X$ 和 $N$（它是固定的，即系统中的芯片数）而不是 $X$ 和 $Y$ 来表示：
 
 $$T_\text{comms} (X) = \frac{4D}{W_\text{ici}} \max\left(\frac{F \cdot X}{N \cdot M_X}, \frac{B}{X \cdot M_Y}\right)$$
 
-Because $T_\text{FSDP comms}$ is monotonically increasing in $X$, and $T_\text{TP comms}$ is monotonically decreasing in $X$, the maximum must be minimized when $T_\text{FSDP comms} = T_\text{TP comms}$, which occurs when
+由于 $T_\text{FSDP comms}$ 关于 $X$ 单调递增，而 $T_\text{TP comms}$ 关于 $X$ 单调递减，二者的最大值必然在 $T_\text{FSDP comms} = T_\text{TP comms}$ 时取到最小，此时
 
 $$\begin{align*}
 \frac{FX_{opt}}{M_X} = \frac{BN}{X_{opt} M_Y} \rightarrow \\
 X_{opt} = \sqrt{\frac{B}{F} \frac{M_X}{M_Y} N}
 \end{align*}$$
 
-This is super useful! This tells us, for a given $B$, $F$, and $N$, what amount of FSDP is optimal. Let's get a sense of scale.  Plugging in realistic values, namely $N = 64$ (corresponding to a 4x4x4 array of chips), $B=48,000$, $F=32768$, gives roughly $X\approx 13.9$. So we would choose $X$ to be 16 and $Y$ to be 4, close to our calculated optimum.
+这非常有用！它告诉我们，在给定 $B$、$F$ 和 $N$ 时，FSDP 的最优规模是多少。我们来感受一下数量级。代入实际的数值，即 $N = 64$（对应 4x4x4 的芯片阵列）、$B=48,000$、$F=32768$，大约得到 $X\approx 13.9$。因此我们会选择 $X$ 为 16、$Y$ 为 4，接近计算出的最优值。
 
-<p markdown=1 class="takeaway">**Takeaway:** in general, during training, the optimal amount of FSDP is $$X_{opt} = \sqrt{\frac{B}{F} \frac{M_X}{M_Y} N}$$. </p>
+<p markdown=1 class="takeaway">**要点：**一般来说，在训练中，FSDP 的最优规模为 $$X_{opt} = \sqrt{\frac{B}{F} \frac{M_X}{M_Y} N}$$。</p>
 
-Now let's return to the question we've been asking of all our parallelism strategies: **under what conditions will we be compute-bound?** Since we can overlap FLOPs and comms, we are compute-bound when
+现在回到我们对每种并行策略都会问的那个问题：**在什么条件下会是计算受限的？** 由于 FLOPs 和通信可以重叠，当满足以下条件时，我们就是计算受限的：
 
 $$\max\left(T_\text{FSDP comms}, T_\text{TP comms}\right) < T_\text{math}$$
 
-By letting $\alpha \equiv C / W_\text{ici}$, the ICI arithmetic intensity, we can simplify:
+令 $\alpha \equiv C / W_\text{ici}$，即 ICI 算术强度，可以化简为：
 
 $$\max\left(\frac{F}{Y \cdot M_X}, \frac{B}{X \cdot M_Y}\right) < \frac{B \cdot F}{N \cdot \alpha}$$
 
-Since we calculated $X_{opt}$ to make the LHS maximum equal, we can just plug it into either side (noting that $Y_{opt} = N/X_{opt}$), i.e.
+由于我们计算 $X_{opt}$ 时正是让左侧 max 中的两项相等，所以可以直接把它代入其中任意一项（注意 $Y_{opt} = N/X_{opt}$），即
 
 $$\frac{F}{N \cdot W_\text{ici} \cdot M_X} \sqrt{\frac{B}{F} \frac{M_X}{M_Y} N} < \frac{B \cdot F}{N \cdot C}$$
 
-Further simplifying, we find that
+进一步化简，得到
 
 $$ \sqrt{\frac{B\cdot F}{M_X \cdot M_Y \cdot N}} < \frac{B \cdot F}{N \cdot \alpha},$$
 
-where the left-hand-side is proportional to the communication time and the right-hand-side is proportional to the computation time. Note that while the computation time scales linearly with the batch size (as it does regardless of parallelism), the communication time scales as the square root of the batch size. The ratio of the computation to communication time thus also scales as the square root of the batch size:
+其中左侧正比于通信时间，右侧正比于计算时间。注意，计算时间随批大小线性增长（无论采用何种并行方式都是如此），而通信时间随批大小的平方根增长。因此，计算时间与通信时间之比也随批大小的平方根增长：
 
 $$ \frac{T_\text{math}}{T_\text{comms}} = \frac{\sqrt{BF}\sqrt{M_X M_Y}}{\alpha \sqrt{N}}. $$
 
-To ensure that this ratio is greater than one so we are compute bound, we require
+为了保证这个比值大于 1，从而是计算受限的，我们需要
 
 $$ \frac{B}{N} > \frac{\alpha^2}{M_X M_Y F}$$
 
-To get approximate numbers, again plug in $F=32,768$, $\alpha=2550$, and $M_X M_Y=2$ (as it must be for a 3D mesh). This gives roughly $B/N > 99$. This roughly wins us a factor of eight compared to the purely data parallel (or FSDP) case, where assuming a 3D mesh we calculate that $B/N$ must exceed about $850$ to be compute bound.
+为了得到近似数值，再次代入 $F=32,768$、$\alpha=2550$ 以及 $M_X M_Y=2$（对 3D 网格来说必然如此）。这大约给出 $B/N > 99$。与纯数据并行（或 FSDP）的情形相比，这大约为我们赢得了 8 倍的空间——在那种情形下，假设是 3D 网格，我们算出 $B/N$ 必须超过约 $850$ 才能计算受限。
 
-<p markdown=1 class="takeaway">**Takeaway:** combining tensor parallelism with FSDP allows us to drop to a $B/N$ of $$2550^2 / 2F$$. This lets us handle a batch of as little as 100 per chip, which is roughly a factor of eight smaller than we could achieve with just FSDP.</p>
+<p markdown=1 class="takeaway">**要点：**将张量并行与 FSDP 结合，可以让 $B/N$ 降到 $$2550^2 / 2F$$。这让我们可以处理每个芯片低至 100 的批大小，大约比单用 FSDP 所能达到的小 8 倍。</p>
 
-Below we plot the ratio of FLOPs to comms time for mixed FSDP + TP, comparing it both to only tensor parallelism (TP) and only data parallelism (FSDP), on a representative 4x4x4 chip array. While pure FSDP parallelism dominates for very large batch sizes, in the regime where batch size over number of chips is between roughly 100 and 850, a mixed FSDP + TP strategy is required in order to be compute-bound.
+下面我们在一个有代表性的 4x4x4 芯片阵列上，绘制了 FSDP + TP 混合方案的 FLOPs 时间与通信时间之比，并与仅用张量并行（TP）和仅用数据并行（FSDP）进行比较。虽然在批大小非常大时纯 FSDP 并行占优，但在批大小与芯片数之比大约在 100 到 850 之间的区间内，必须采用 FSDP + TP 混合策略才能做到计算受限。
 
-{% include figure.liquid path="assets/img/mixed-fsdp-comms-2.png" class="img-fluid" caption="<b>Figure:</b> ratio of FLOPs to comms time for optimal mixed FSDP/TP on a TPUv5p 4x4x4 slice with F=30k. As expected, tensor parallelism has a fixed ratio with batch size; ideal mixed FSDP + TP scales with $\sqrt{B}$, and FSDP scales with $B$. However, in intermediate batch size regimes, only FSDP + TP achieves a ratio greater than unity."%}
+{% include figure.liquid path="assets/img/mixed-fsdp-comms-2.png" class="img-fluid" caption="<b>图：</b>在 F=30k 的 TPUv5p 4x4x4 切片上，最优 FSDP/TP 混合方案的 FLOPs 时间与通信时间之比。正如预期，张量并行的这一比值不随批大小变化；理想的 FSDP + TP 混合方案随 $\sqrt{B}$ 增长，而 FSDP 随 $B$ 增长。然而，在中等批大小的区间内，只有 FSDP + TP 能使这一比值大于 1。"%}
 
-Here's another example of TPU v5p 16x16x16 showing the FLOPs and comms time as a function of batch size for different sharding schemes.
+下面是 TPU v5p 16x16x16 上的另一个例子，展示了不同分片方案下 FLOPs 时间和通信时间随批大小的变化。
 
-{% include figure.liquid path="assets/img/math-comms-time.png" class="img-fluid" caption="<b>Figure:</b> time taken for communication with different parallelism schemes. The black dashed line is the time taken by the matrix multiplication FLOPs, so any curve above this line is comms-bound. We note that all strategies become comms-bound below batch size 6e5, which is in line with our expected 4096 * 2550^2 / (2 * 8192 * 4) = 4e5." %}
+{% include figure.liquid path="assets/img/math-comms-time.png" class="img-fluid" caption="<b>图：</b>不同并行方案的通信耗时。黑色虚线是矩阵乘法 FLOPs 所花的时间，因此任何位于这条线之上的曲线都是通信受限的。我们注意到，所有策略在批大小低于 6e5 时都会变成通信受限，这与我们预期的 4096 * 2550^2 / (2 * 8192 * 4) = 4e5 相符。" %}
 
-The black curve is the amount of time spent on model FLOPs, meaning any batch size where this is lower than all comms costs is strictly comms bound. You'll notice the black curve intersects the green curve at about `4e5`, as predicted.
+黑色曲线是花在模型 FLOPs 上的时间，这意味着在任何黑色曲线低于所有通信开销的批大小下，都严格是通信受限的。你会注意到，黑色曲线与绿色曲线大约在 `4e5` 处相交，与预测一致。
 
-Here's an interactive animation to play with this, showing the total compute time and communication time for different batch sizes:
+下面是一个可以动手把玩的交互式动画，展示了不同批大小下的总计算时间和通信时间：
 
 <figure class="plotly-embed">
   <iframe src="{{ 'assets/plotly/training-roofline.html' | relative_url }}" title="MLP roofline for mixed FSDP/TP" loading="lazy" scrolling="no"></iframe>
-  <figcaption><b>Figure:</b> forward-pass MLP compute and communication time on a TPU v5p 16x16x16 ($D=8192$, $F=32768$) as a function of batch size, using $T_\text{FSDP comms}$, $T_\text{TP comms}$ and $T_\text{math}$ from above. Drag the slider to change the FSDP/TP split. Any batch size in the shaded region is comms-bound.</figcaption>
+  <figcaption><b>图：</b>TPU v5p 16x16x16（$D=8192$，$F=32768$）上 MLP 前向传播的计算时间和通信时间随批大小的变化，使用的是上文的 $T_\text{FSDP comms}$、$T_\text{TP comms}$ 和 $T_\text{math}$。拖动滑块可以改变 FSDP/TP 的划分。阴影区域内的任何批大小都是通信受限的。</figcaption>
 </figure>
 
-You'll notice this generally agrees with the above: the best split, FSDP=512 and TP=8, becomes compute-bound above a batch size of about 4e5, while every split with more tensor parallelism stays comms-bound at all batch sizes. Splits with less tensor parallelism need an even larger batch.
+你会注意到这与上面的结论基本一致：最佳划分 FSDP=512、TP=8 在批大小超过约 4e5 时变为计算受限，而任何张量并行程度更高的划分在所有批大小下都保持通信受限。张量并行程度更低的划分则需要更大的批大小。
 
-### Pipelining
+### 流水线 {#pipelining}
 
-You'll probably notice we've avoided talking about pipelining at all in the previous sections. Pipelining is a dominant strategy for GPU parallelism that is somewhat less essential on TPUs. Briefly, pipelined training involves splitting the layers of a model across multiple devices and passing the activations between pipeline stages during the forward and backward pass. The algorithm is something like:
+你可能已经注意到，前面几节我们完全没有谈到流水线。流水线是 GPU 并行中的主流策略，但在 TPU 上则没那么必不可少。简单来说，流水线训练就是把模型的各层切分到多个设备上，并在前向和反向传播过程中在流水线阶段之间传递激活值。算法大致如下：
 
-1. Initialize your data on TPU 0 with your weights sharded across the layer dimension ($W_\text{in}[L_Z, D_X, F_Y]$ for pipelining with FSDP and tensor parallelism).
-2. Perform the first layer on TPU 0, then copy the resulting activations to TPU 1, and repeat until you get to the last TPU.
-3. Compute the loss function and its derivative $\partial L / \partial x_L$.
-4. For the last pipeline stage, compute the derivatives $\partial L / \partial W_L$ and $\partial L / \partial x_{L-1}$, then copy $\partial L / \partial x_{L-1}$ to the previous pipeline stage and repeat until you reach TPU 0.
+1. 在 TPU 0 上初始化数据，并将权重沿层维度分片（对于结合 FSDP 和张量并行的流水线，即 $W_\text{in}[L_Z, D_X, F_Y]$）。
+2. 在 TPU 0 上执行第一层，然后把得到的激活值复制到 TPU 1，如此重复，直到最后一个 TPU。
+3. 计算损失函数及其导数 $\partial L / \partial x_L$。
+4. 对最后一个流水线阶段，计算导数 $\partial L / \partial W_L$ 和 $\partial L / \partial x_{L-1}$，然后把 $\partial L / \partial x_{L-1}$ 复制到前一个流水线阶段，如此重复，直到回到 TPU 0。
 
-{% details Here is some (working) Python pseudo-code %}
+{% details 这里有一些（可运行的）Python 伪代码 %}
 
-This pseudocode should run on a Cloud TPU VM. While it's not very efficient or realistic, it gives you a sense how data is being propagated across devices.
+这段伪代码应当可以在 Cloud TPU VM 上运行。虽然它既不高效也不贴近实际，但能让你了解数据是如何在设备之间传递的。
 
 ```python
 batch_size = 32
@@ -559,58 +570,58 @@ for i in range(num_layers - 1, -1, -1):
 
 {% enddetails %}
 
-**Why is this a good idea?** Pipelining is great for many reasons: it has a low communication cost between pipeline stages, meaning you can train very large models even with low bandwidth interconnects. This is often very useful on GPUs since they are not densely connected by ICI in the way TPUs are.
+**为什么这是个好主意？** 流水线有很多优点：流水线阶段之间的通信开销很低，这意味着即使互连带宽很低，也能训练非常大的模型。这在 GPU 上往往非常有用，因为 GPU 不像 TPU 那样通过 ICI 密集互连。
 
-**Why is this difficult/annoying?** You might have noticed in the pseudocode above that TPU 0 is almost always idle! It's only doing work on the very first and last step of the pipeline. The period of idleness is called a pipeline bubble and is very annoying to deal with. Typically we try to mitigate this first with microbatching, which sends multiple small batches through the pipeline, keeping TPU 0 utilized for at least a larger fraction of the total step time.
+**为什么这很难/很烦人？** 你可能已经在上面的伪代码中注意到，TPU 0 几乎一直处于空闲状态！它只在流水线的第一步和最后一步做工作。这段空闲时间称为流水线气泡（pipeline bubble），处理起来非常麻烦。通常我们首先尝试用微批次来缓解它，即把多个小批次依次送入流水线，使 TPU 0 至少在总步时间中更大的一部分里保持忙碌。
 
-A second approach is to carefully overlap the forward matmul $W_i @ x_i$, the backward $dx$ matmul $W_i @ \partial L / \partial x_{i+1}$, and the $dW$ matmul $\partial L / \partial x_{i+1} @ x_i$. Since each of these requires some FLOPs, we can overlap them to fully hide the bubble. Here's a plot from the recent DeepSeek v3 paper<d-cite key="DeepSeek3"></d-cite> showing their "bubble-free" pipeline schedule:
+第二种方法是仔细地重叠前向矩阵乘法 $W_i @ x_i$、反向的 $dx$ 矩阵乘法 $W_i @ \partial L / \partial x_{i+1}$ 以及 $dW$ 矩阵乘法 $\partial L / \partial x_{i+1} @ x_i$。由于每一项都需要一些 FLOPs，我们可以把它们重叠起来，从而完全隐藏气泡。下面是最近的 DeepSeek v3 论文<d-cite key="DeepSeek3"></d-cite>中的一张图，展示了他们“无气泡”的流水线调度：
 
-{% include figure.liquid path="assets/img/deepseek-pipeline.png" class="img-fluid" caption="<b>Figure:</b> the DeepSeek v3 pipeline schedule (from their <a href=\"https://arxiv.org/pdf/2412.19437\">recent paper</a>). Orange is the forward matmul, green is the dL/dx matmul, and blue is the dL/dW matmul. By prioritizing the backwards dL/dx multiplications, we can avoid \"stranding\" FLOPs." %}
+{% include figure.liquid path="assets/img/deepseek-pipeline.png" class="img-fluid" caption="<b>图：</b>DeepSeek v3 的流水线调度（来自他们的<a href=\"https://arxiv.org/pdf/2412.19437\">最新论文</a>）。橙色是前向矩阵乘法，绿色是 dL/dx 矩阵乘法，蓝色是 dL/dW 矩阵乘法。通过优先执行反向的 dL/dx 乘法，我们可以避免 FLOPs 被“搁浅”。" %}
 
-Because it is less critical for TPUs (which have larger interconnected pods), we won't delve into this as deeply, but it's a good exercise to understand the key pipelining bottlenecks.
+由于流水线对 TPU 来说没那么关键（TPU 拥有更大的互连 Pod），我们不会深入探讨它，但理解流水线的关键瓶颈是一个很好的练习。
 
-### Scaling Across Pods
+### 跨 Pod 扩展 {#scaling-across-pods}
 
-The largest possible TPU slice is a TPU v5p SuperPod with 8960 chips (and 2240 hosts). When we want to scale beyond this size, we need to cross the Data-Center Networking (DCN) boundary. Each TPU host comes equipped with one or several NICs (Network Interface Cards) that connect the host to other TPU v5p pods over Ethernet. As noted in the [TPU Section](../tpus), each host has about 200Gbps (25GB/s) of full-duplex DCN bandwidth, which is about 6.25GB/s full-duplex (egress) bandwidth per TPU.
+最大的 TPU 切片是拥有 8960 个芯片（以及 2240 台主机）的 TPU v5p SuperPod。当我们想扩展到超过这个规模时，就需要跨越数据中心网络（Data-Center Networking，DCN）的边界。每台 TPU 主机都配备一个或多个 NIC（网络接口卡），通过以太网把主机连接到其他 TPU v5p Pod。正如 [TPU 章节](../tpus)中所述，每台主机大约有 200Gbps（25GB/s）的全双工 DCN 带宽，相当于每个 TPU 约 6.25GB/s 的全双工（出口）带宽。
 
-Typically, when scaling beyond a single pod, we do some form of model parallelism or FSDP within the ICI domain, and then pure data parallelism across multiple pods. Let $N$ be the number of TPUs we want to scale to and $M$ be the number of TPUs per ICI-connected slice. To do an AllReduce over DCN, we can do a ring-reduction over the set of pods, giving us (in the backward pass):
+通常，当扩展到单个 Pod 之外时，我们会在 ICI 域内做某种形式的模型并行或 FSDP，然后在多个 Pod 之间做纯数据并行。令 $N$ 为我们想要扩展到的 TPU 数量，$M$ 为每个 ICI 互连切片中的 TPU 数量。为了在 DCN 上做 AllReduce，我们可以在这组 Pod 上做环形归约（ring-reduction），从而（在反向传播中）得到：
 
 $$T_\text{math} = \frac{2 \cdot 2 \cdot 2 \cdot BDF}{N \cdot C}$$
 
 $$T_\text{comms} = \frac{2 \cdot 2 \cdot 2 \cdot DF}{M \cdot W_\text{dcn}}$$
 
-The comms bandwidth scales with $M$, since unlike ICI the total bandwidth grows as we grow our ICI domain and acquire more NICs. Simplifying, we find that $T_\text{math} > T_\text{comms}$ when
+通信带宽随 $M$ 增长，因为与 ICI 不同，随着 ICI 域变大、拥有的 NIC 变多，总带宽也会增长。化简后可以发现，$T_\text{math} > T_\text{comms}$ 的条件是
 
 $$\frac{B}{\text{slice}} > \frac{C}{W_\text{dcn}}$$
 
-For TPU v5p, the $\frac{C}{W_\text{dcn}}$ is about `4.59e14 / 6.25e9 = 73,440`. This tells us that to efficiently scale over DCN, there is a minimum batch size per ICI domain needed to egress each node.
+对于 TPU v5p，$\frac{C}{W_\text{dcn}}$ 约为 `4.59e14 / 6.25e9 = 73,440`。这告诉我们，要在 DCN 上高效扩展，每个 ICI 域都需要达到一个最小批大小，才能撑得住每个节点的出口通信。
 
-**How much of a problem is this?** To take a specific example, say we want to train LLaMA-3 70B on TPU v5p with a BS of 2M tokens. LLaMA-3 70B has $F\approx 30,000$. From the above sections, we know the following:
+**这个问题有多严重？** 举个具体的例子，假设我们想在 TPU v5p 上以 2M token 的批大小（BS）训练 LLaMA-3 70B。LLaMA-3 70B 的 $F\approx 30,000$。根据前面几节，我们知道：
 
-* We can do Tensor Parallelism up to $Y = M_Y \cdot F / 2550 \approx 11 \cdot M_Y$.
-* We can do FSDP so long as $B / N > 2550 / M_X$. That means if we want to train with BS=2M and 3 axes of data parallelism, we'd at most be able to use $\approx 2400$ chips, roughly a quarter of a TPU v5p pod.
-* When we combine FSDP + Tensor Parallelism, become comms-bound when we have $B / N < 2550^2 / (2 \cdot 30000) = 108$, so this lets us scale to roughly 18k chips! However, the maximum size of a TPU v5p pod is 8k chips, so beyond that we have to use DCN.
+* 张量并行最多可以做到 $Y = M_Y \cdot F / 2550 \approx 11 \cdot M_Y$。
+* 只要 $B / N > 2550 / M_X$，我们就可以做 FSDP。这意味着如果想以 BS=2M、3 个数据并行轴进行训练，最多只能使用 $\approx 2400$ 个芯片，大约是一个 TPU v5p Pod 的四分之一。
+* 当我们结合 FSDP + 张量并行时，在 $B / N < 2550^2 / (2 \cdot 30000) = 108$ 时才会变成通信受限，因此这让我们可以扩展到大约 18k 个芯片！然而，TPU v5p Pod 的最大规模是 8k 个芯片，超出这个规模就必须使用 DCN。
 
-The TLDR is that we have a nice recipe for training with BS=1M, using roughly X (FSDP) = 1024 and Y (TP) = 8, but with BS=2M we need to use DCN. As noted above, we have a DCN arithmetic intensity of $\text{73,440}$, so we just need to make sure our batch size per ICI domain is greater than this. This is trivial for us, since with 2 pods we'd have a per-pod BS of 1M, and a per TPU batch size of 111, which is great (maybe cutting it a bit close, but theoretically sound).
+简而言之（TLDR），我们有一个很好的方案来以 BS=1M 进行训练，大约使用 X（FSDP）= 1024 和 Y（TP）= 8，但对于 BS=2M 就需要使用 DCN。如上所述，DCN 算术强度为 $\text{73,440}$，所以我们只需确保每个 ICI 域的批大小大于这个值即可。这对我们来说轻而易举，因为用 2 个 Pod 时，每个 Pod 的 BS 为 1M，每个 TPU 的批大小为 111，这非常好（也许有点紧，但理论上是可行的）。
 
-<p markdown=1 class="takeaway">**Takeaway:** Scaling across multiple TPU pods is fairly straightforward using pure data parallelism so long as our per-pod batch size is at least 73k tokens.</p>
+<p markdown=1 class="takeaway">**要点：**只要每个 Pod 的批大小至少为 73k token，使用纯数据并行跨多个 TPU Pod 扩展就相当直接。</p>
 
-## Takeaways from LLM Training on TPUs
+## 在 TPU 上训练 LLM 的要点 {#takeaways-from-llm-training-on-tpus}
 
-* Increasing parallelism or reducing batch size both tend to make us more communication-bound because they reduce the amount of compute performed per chip.
+* 增加并行度或减小批大小都往往会让我们更趋于通信受限，因为二者都会减少每个芯片上执行的计算量。
 
-* Up to a reasonable context length (~32k) we can get away with modeling a Transformer as a stack of MLP blocks and define each of several parallelism schemes by how they shard the two/three main matmuls per layer.
+* 在合理的上下文长度（约 32k）以内，我们可以把 Transformer 近似建模为一摞 MLP 块，并根据每层两个/三个主要矩阵乘法的分片方式来定义各种并行方案。
 
-* During training there are 4 main parallelism schemes we consider, each of which has its own bandwidth and compute requirements (data parallelism, FSDP, tensor parallelism, and mixed FSDP + tensor parallelism).
+* 训练时我们主要考虑 4 种并行方案，每种都有自己的带宽和计算需求（数据并行、FSDP、张量并行，以及 FSDP + 张量并行的混合方案）。
 
-| **Strategy**                                 | **Description**                                                                                                                                                                            |
+| **策略**                                 | **描述**                                                                                                                                                                            |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Data Parallelism**                         | Activations are batch sharded, everything else is fully-replicated, we all-reduce gradients during the backward pass.                                                                      |
-| **FSDP**                                     | Activations, weights, and optimizer are batch sharded, weights are gathered just before use, gradients are reduce-scattered.                                                               |
-| **Tensor Parallelism (aka Megatron, Model)** | Activations are sharded along $$d_\text{model}$$, weights are sharded along $$d_{ff}$$, activations are gathered before W<sub>in</sub>, the result reduce-scattered after W<sub>out</sub>. |
-| **Mixed FSDP + Tensor Parallelism**          | Both of the above, where FSDP gathers the model sharded weights.                                                                                                                           |
+| **数据并行**                         | 激活值按批次分片，其余一切都完全复制，在反向传播期间对梯度做 AllReduce。                                                                      |
+| **FSDP**                                     | 激活值、权重和优化器状态都按批次分片，权重在使用前才被 gather，梯度做 ReduceScatter。                                                               |
+| **张量并行（又称 Megatron 并行、模型并行）** | 激活值沿 $$d_\text{model}$$ 分片，权重沿 $$d_{ff}$$ 分片，激活值在 W<sub>in</sub> 之前做 gather，结果在 W<sub>out</sub> 之后做 ReduceScatter。 |
+| **FSDP + 张量并行混合**          | 同时使用以上两者，其中 FSDP gather 的是已按模型并行（张量并行）分片的权重。                                                                                                                           |
 
-And here are the "formulas" for each method:
+下面是每种方法的“公式”：
 
 $$\small
 \begin{array}{cc}
@@ -623,7 +634,7 @@ $$\small
 \hline
 \end{array}$$
 
-* Each of these strategies has a limit at which it becomes network/communication bound, based on their per-device compute and comms. Here's compute and comms per-layer, assuming $$X$$ is FSDP and $$Y$$ is tensor parallelism.
+* 根据每个设备上的计算量和通信量，每种策略都有一个界限，超过它就会变成网络/通信受限。下面是每层的计算量和通信量，假设 $$X$$ 是 FSDP 轴、$$Y$$ 是张量并行轴。
 
 $$
 \small
@@ -638,23 +649,23 @@ $$
 \hline
 \end{array}$$
 
-* Pure data parallelism is rarely useful because the model and its optimizer state use bytes = 10x parameter count. This means we can rarely fit more than a few billion parameters in memory.
+* 纯数据并行很少有用，因为模型及其优化器状态占用的字节数 = 参数量的 10 倍。这意味着我们很少能在内存中放下超过几十亿个参数。
 
-* Data parallelism and FSDP become comms bound when the $$\text{batch size per shard} < C / W$$, the arithmetic intensity of the network. For ICI this is 2,550 and for DCN this is about 71,000. This can be increased with more parallel axes.
+* 当 $$\text{batch size per shard} < C / W$$（即网络的算术强度）时，数据并行和 FSDP 就会变成通信受限。对 ICI 来说这个值是 2,550，对 DCN 来说约为 71,000。使用更多并行轴可以提高这个值。
 
-* Tensor parallelism becomes comms bound when $$\lvert Y\rvert > F / 2550$$. **This is around 8-16 way for most models.** This is independent of the batch size.
+* 当 $$\lvert Y\rvert > F / 2550$$ 时，张量并行会变成通信受限。**对大多数模型来说，这大约是 8-16 路。** 这与批大小无关。
 
-* Mixed FSDP + tensor parallelism allows us to drop the batch size to as low as $$2550^2 / 2F \approx 100$$. This is remarkably low.
+* FSDP + 张量并行混合方案让我们能把批大小降到低至 $$2550^2 / 2F \approx 100$$。这已经非常低了。
 
-* Data parallelism across pods requires a minimum batch size per pod of roughly 71,000 before becoming DCN-bound.
+* 跨 Pod 的数据并行要求每个 Pod 的批大小至少约为 71,000，否则就会变成 DCN 受限。
 
-* Basically, if your batch sizes are big or your model is small, things are simple. You can either do data parallelism or FSDP + data parallelism across DCN. The middle section is where things get interesting.
+* 总的来说，如果批大小很大或模型很小，事情就很简单：你可以用数据并行，或者在 DCN 上用 FSDP + 数据并行。真正有意思的是中间地带。
 
-## Some Problems to Work
+## 一些练习题 {#some-problems-to-work}
 
-Let's use LLaMA-2 13B as a basic model for this section. Here are the model details:
+本节我们用 LLaMA-2 13B 作为基础模型。模型细节如下：
 
-| hyperparam | value  |
+| 超参数 | 取值  |
 | ---------- | ------ |
 | L          | 40     |
 | D          | 5,120  |
@@ -664,62 +675,62 @@ Let's use LLaMA-2 13B as a basic model for this section. Here are the model deta
 | H          | 128    |
 | V          | 32,000 |
 
-LLaMA-2 has separate embedding and output matrices and a gated MLP block.
+LLaMA-2 的嵌入矩阵和输出矩阵是分开的，并且使用门控 MLP 块。
 
-**Question 1:** How many parameters does LLaMA-2 13B have (I know that's silly but do the math)? *Note that, as in [Transformer Math](../transformers), LLaMA-3 has 3 big FFW matrices, two up-projection and one down-projection. We ignored the two "gating" einsum matrices in this section, but they behave the same as W<sub>in</sub> in this section.*
+**问题 1：** LLaMA-2 13B 有多少参数（我知道这问题有点傻，但还是算一下吧）？*注意，和 [Transformer 数学](../transformers)中一样，LLaMA-3 有 3 个大的 FFW 矩阵：两个上投影矩阵和一个下投影矩阵。本节中我们忽略了两个“门控”einsum 矩阵，但它们的行为与本节中的 W<sub>in</sub> 相同。*
 
-{% details Click here for the answer. %}
+{% details 点击此处查看答案。 %}
 
-* FFW parameters: $$3LDF$$ = `8.5e9`
-* Attention parameters: $$4DNHL$$ = `4.2e9`
-* Vocabulary parameters: $$2VD$$ = `0.33e9`
-* Total: `8.5e9 + 4.2e9 + 0.33e9 = 13.0e9`, as expected!
-
-{% enddetails %}
-
-**Question 2:** Let's assume we're training with BS=16M tokens and using Adam. Ignoring parallelism for a moment, how much total memory is used by the model's parameters, optimizer state, and activations? *Assume we store the parameters in bf16 and the optimizer state in fp32 and checkpoint activations three times per layer (after the three big FFW matmuls).*
-
-{% details Click here for the answer. %}
-
-The total memory used for the parameters (bf16) and the two optimizer states (fp32, the first and second moment accumulators) is `(2 + 4 + 4) * 13e9 ~ 130GB`. The activations after the first two matmuls are shaped $BF$ and after the last one $BD$ (per the Transformer diagram above), so the total memory for bf16 is $2 \cdot L \cdot (BD + 2 * BF) = 2LB \cdot (D + 2F)$ or `2 * 40 * 16e6 * 5,120 * (1 + 2 * 2.7) ~ 4.2e13 = 42TB`, since `B=16e6`. All other activations are more or less negligible.
+* FFW 参数：$$3LDF$$ = `8.5e9`
+* 注意力参数：$$4DNHL$$ = `4.2e9`
+* 词表参数：$$2VD$$ = `0.33e9`
+* 总计：`8.5e9 + 4.2e9 + 0.33e9 = 13.0e9`，与预期一致！
 
 {% enddetails %}
 
-**Question 3:** Assume we want to train with 32k sequence length and a total batch size of 3M tokens on a TPUv5p 16x16x16 slice. Assume we want to use bfloat16 weights and a float32 optimizer, as above.
+**问题 2：** 假设我们以 BS=16M token 进行训练，并使用 Adam。暂时忽略并行，模型的参数、优化器状态和激活值一共占用多少内存？*假设参数以 bf16 存储、优化器状态以 fp32 存储，并且每层对激活值做三次检查点（在三个大的 FFW 矩阵乘法之后）。*
 
-1. Can we use pure data parallelism? Why or why not?
-2. Can we use pure FSDP without being comms-bound? Why or why not? With pure FSDP, how much memory will be used per device (assume we do gradient checkpointing only after the 3 big FFW matrices).
-3. Can we use mixed FSDP + tensor parallelism? Why or why not? If so, what should $X$ and $Y$ be? How much memory will be stored per device? Using only roofline FLOPs estimates and ignoring attention, how long will each training step take at 40% MFU?
+{% details 点击此处查看答案。 %}
 
-{% details Click here for the answer. %}
-
-First, let's write down some numbers. With 32k sequence length and a 3M batch size, we have a sequence batch size of 96. On a TPU v5p 16x16x16 slice, we have `393TB` of HBM.
-
-1. We can't use pure data parallelism, because it replicates the parameters and optimizer states on each chip, which are already around 130GB (from Q2) which is more HBM than we have per-chip (96GB).
-
-2. Let's start by looking purely at memory. Replacing BS=16M with 3M in Q2, we get `~7.86e12` total checkpoint activations, and with the 1.3e11 optimizer state this brings us to almost exactly 8e12 = 8TB. The TPUv5p slice has `393TB` of HBM in total, so we are safely under the HBM limit. Next let's look at whether we'll be comms or compute-bound. With 4096 chips and 3 axes of parallelism, we can do a minimum batch size of `850 * 4096 = 3.48M` tokens. That's slightly above our 3M batch size. So we're actually comms-bound, which is sad. So the general answer is **no, we cannot do FSDP alone without being comms-bound**.
-
-3. Now we know our primary concern is being comms-bound, so let's plug in some numbers. First of all, we know from above that our per-chip batch size with mixed FSDP + tensor parallelism needs to be above $2550^2 / 2F = 235$ here. That means we can in theory do this! Let's figure out how much of each.
-
-We have the rule $X_{opt} = \sqrt{(B / F) \cdot (M_X / M_Y) \cdot N}$, so here we have `sqrt(3e6 * 2 * 4096 / 13824) = 1333`, meaning we'll do roughly 1024 way DP and 4 way TP. Per TPU memory will be as in (2), and step time will just be `6 * 3e6 * 13e9 / (4096 * 4.6e14 * 0.4) = 300ms`.
+参数（bf16）和两个优化器状态（fp32，即一阶矩和二阶矩累加器）总共占用的内存为 `(2 + 4 + 4) * 13e9 ~ 130GB`。前两个矩阵乘法之后的激活值形状为 $BF$，最后一个之后为 $BD$（见上面的 Transformer 示意图），因此以 bf16 存储时总内存为 $2 \cdot L \cdot (BD + 2 * BF) = 2LB \cdot (D + 2F)$，即 `2 * 40 * 16e6 * 5,120 * (1 + 2 * 2.7) ~ 4.2e13 = 42TB`，因为 `B=16e6`。其他激活值基本都可以忽略。
 
 {% enddetails %}
 
-<h3 markdown=1 class="next-section">That's it for Part 5! For Part 6, which applies this content to real LLaMA models, [click here](../applied-training)!</h3>
+**问题 3：** 假设我们想在一个 TPUv5p 16x16x16 切片上，以 32k 序列长度、总批大小 3M token 进行训练。和上面一样，假设我们使用 bfloat16 权重和 float32 优化器。
 
-## Appendix
+1. 我们能用纯数据并行吗？为什么能或为什么不能？
+2. 我们能用纯 FSDP 而不陷入通信受限吗？为什么能或为什么不能？使用纯 FSDP 时，每个设备会占用多少内存（假设只在 3 个大的 FFW 矩阵之后做梯度检查点）？
+3. 我们能用 FSDP + 张量并行混合方案吗？为什么能或为什么不能？如果能，$X$ 和 $Y$ 应该取多少？每个设备会存储多少内存？只用 Roofline FLOPs 估算并忽略注意力，在 40% MFU 下每个训练步需要多长时间？
 
-### Appendix A: Deriving the backward pass comms
+{% details 点击此处查看答案。 %}
 
-Above, we simplified the Transformer layer forward pass as Out[B, D] = In[B, D] *<sub>D</sub> W<sub>in</sub>[D, F] *<sub>F</sub> W<sub>out</sub>[F, D]. How do we derive the comms necessary for the backwards pass?
+首先写下一些数字。32k 序列长度、3M 批大小，意味着以序列计的批大小为 96。在一个 TPU v5p 16x16x16 切片上，我们共有 `393TB` 的 HBM。
 
-This follows fairly naturally from the rule in the previous section for a single matmul **Y = X * A**:
+1. 我们不能用纯数据并行，因为它会在每个芯片上复制参数和优化器状态，这些已经约有 130GB（来自问题 2），比每个芯片的 HBM（96GB）还多。
+
+2. 先只看内存。把问题 2 中的 BS=16M 换成 3M，我们得到 `~7.86e12` 的检查点激活值总量，再加上 1.3e11 的优化器状态，几乎正好是 8e12 = 8TB。TPUv5p 切片总共有 `393TB` 的 HBM，所以我们稳稳处在 HBM 上限之内。接下来看我们是通信受限还是计算受限。用 4096 个芯片和 3 个并行轴，我们能做到的最小批大小为 `850 * 4096 = 3.48M` token。这比我们 3M 的批大小略高。所以我们实际上是通信受限的，这很遗憾。因此总体答案是：**不能，单独使用 FSDP 无法避免通信受限**。
+
+3. 现在我们知道主要的顾虑是通信受限，那就代入一些数字。首先，由上文可知，使用 FSDP + 张量并行混合方案时，每个芯片的批大小需要高于 $2550^2 / 2F = 235$。这意味着理论上我们可以做到！我们来算一下两者各取多少。
+
+我们有规则 $X_{opt} = \sqrt{(B / F) \cdot (M_X / M_Y) \cdot N}$，这里得到 `sqrt(3e6 * 2 * 4096 / 13824) = 1333`，也就是说我们大约做 1024 路 DP 和 4 路 TP。每个 TPU 的内存与 (2) 中相同，而步时间就是 `6 * 3e6 * 13e9 / (4096 * 4.6e14 * 0.4) = 300ms`。
+
+{% enddetails %}
+
+<h3 markdown=1 class="next-section">第 5 部分到此结束！第 6 部分会把这些内容应用到真实的 LLaMA 模型上，[点击这里](../applied-training)继续！</h3>
+
+## 附录 {#appendix}
+
+### 附录 A：推导反向传播的通信 {#appendix-a-deriving-the-backward-pass-comms}
+
+上文中，我们把 Transformer 层的前向传播简化为 Out[B, D] = In[B, D] *<sub>D</sub> W<sub>in</sub>[D, F] *<sub>F</sub> W<sub>out</sub>[F, D]。那么反向传播所需的通信该如何推导呢？
+
+这可以很自然地从上一节中关于单个矩阵乘法 **Y = X * A** 的规则得出：
 
 $$\frac{dL}{dA} = \frac{dL}{dY}\frac{dY}{dA} = X^T \left(\frac{dL}{dY}\right)$$
 
 $$\frac{dL}{dX} = \frac{dL}{dY}\frac{dY}{dX} = \left(\frac{dL}{dY}\right) A^T$$
 
-Using this, we get the following formulas (letting Tmp[B, F] stand for In[B, D] * W<sub>in</sub>[D, F]):
+据此，我们得到以下公式（令 Tmp[B, F] 表示 In[B, D] * W<sub>in</sub>[D, F]）：
 
 <div markdown=1 class="algorithm">
 
@@ -730,4 +741,4 @@ Using this, we get the following formulas (letting Tmp[B, F] stand for In[B, D] 
 
 </div>
 
-Note that these formulas are mathematical statements, with no mention of sharding.  The job of the backwards pass is to compute these four quantities.  So to figure out the comms necessary, we just take the shardings of all the quantities which are to be matmulled in the four equations above (Tmp, dOut, W<sub>out</sub>, W<sub>in</sub>), which are specified by our parallelization scheme, and use the rules of sharded matmuls to figure out what comms we have to do.  Note that dOut is sharded in the same way as Out.
+注意，这些公式只是数学表述，并未涉及分片。反向传播的任务就是计算这四个量。因此，要弄清所需的通信，我们只需取上面四个等式中所有参与矩阵乘法的量（Tmp、dOut、W<sub>out</sub>、W<sub>in</sub>）的分片方式——它们由我们的并行方案决定——然后用分片矩阵乘法的规则来确定需要做哪些通信。注意，dOut 的分片方式与 Out 相同。
