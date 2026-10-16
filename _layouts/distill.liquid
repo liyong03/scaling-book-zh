@@ -83,9 +83,9 @@
     <d-byline>
       <div class="byline grid">
         <div class="authors-affiliations grid">
-          <h3 style="grid-column: 1; grid-row: 1;">Authors</h3>
+          <h3 style="grid-column: 1; grid-row: 1;">作者</h3>
           <h3></h3>
-          <h3>Affiliation</h3>
+          <h3>单位</h3>
           {% for author in page.authors %}
           {% assign byline_col = forloop.index0 | divided_by: byline_half | plus: 1 %}
           {% assign byline_row = forloop.index0 | modulo: byline_half | plus: 2 %}
@@ -98,11 +98,11 @@
           {% endfor %}
         </div>
         <div>
-          <h3>Published</h3>
+          <h3>发布日期</h3>
           <!-- Match the AP-style month abbreviations in template.v2.js's `months` array. -->
           {% assign byline_months = "Jan.,Feb.,March,April,May,June,July,Aug.,Sept.,Oct.,Nov.,Dec." | split: "," %}
           {% assign byline_month_idx = page.date | date: '%-m' | minus: 1 %}
-          <p>{{ byline_months[byline_month_idx] }} {{ page.date | date: '%-d, %Y' }}</p>
+          <p>{{ page.date | date: '%Y 年 %-m 月 %-d 日' }}</p>
         </div>
       </div>
     </d-byline>

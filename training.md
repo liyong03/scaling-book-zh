@@ -207,9 +207,9 @@ $$\text{In}[L_Z, B, D][i] \cdot_D W_\text{in}[L_Z, D, F][i] \cdot_F W_\text{out}
 
 **为什么要这样做？**纯数据并行通过在批维度上切分激活值来减轻激活值的内存压力，只要有更多芯片来切分批维度，我们几乎可以任意增大批大小。尤其是在训练期间，激活值往往占据了大部分内存，这一点非常有帮助。
 
-**为什么不这样做？**纯数据并行完全无法减轻模型参数或优化器状态带来的内存压力。这意味着，对于参数 + 优化器状态放不进单个 TPU 的、规模较大的有意义模型，纯数据并行很少有用武之地。为了给出一个量级上的直观感受：如果我们用 bf16 存储参数、用 fp32 存储优化器状态并使用 Adam 训练<d-footnote>Adam 需要存储参数以及一阶和二阶累加量。由于参数为 bfloat16、优化器状态为 float32，每个参数需要 `2 + 8 = 10` 字节。</d-footnote>，那么能放下的最大模型参数量为 $$\text{TPU memory} / 10$$，例如在一块拥有 96GB HBM 的 TPUv5p 芯片上使用纯数据并行，大约是 9B 参数。
+**为什么不这样做？**纯数据并行完全无法减轻模型参数或优化器状态带来的内存压力。这意味着，对于参数 + 优化器状态放不进单个 TPU 的、规模较大的有意义模型，纯数据并行很少有用武之地。为了给出一个量级上的直观感受：如果我们用 bf16 存储参数、用 fp32 存储优化器状态并使用 Adam 训练<d-footnote>Adam 需要存储参数以及一阶和二阶累加量。由于参数为 bfloat16、优化器状态为 float32，每个参数需要 `2 + 8 = 10` 字节。</d-footnote>，那么能放下的最大模型参数量为 $$\text{TPU 内存} / 10$$，例如在一块拥有 96GB HBM 的 TPUv5p 芯片上使用纯数据并行，大约是 9B 参数。
 
-<p markdown=1 class="takeaway">**要点**：使用 Adam 和纯数据并行时，我们能训练的最大模型满足 $$\text{num_params} = \text{HBM per device} / 10$$。对于 TPU v5p，大约是 9B 参数。<d-footnote>注意，这里没有计入梯度检查点，因此实际上并不可用。这是在批大小仅为 1 个 token 时的绝对下界。</d-footnote></p>
+<p markdown=1 class="takeaway">**要点**：使用 Adam 和纯数据并行时，我们能训练的最大模型满足 $$\text{num_params} = \text{每设备 HBM} / 10$$。对于 TPU v5p，大约是 9B 参数。<d-footnote>注意，这里没有计入梯度检查点，因此实际上并不可用。这是在批大小仅为 1 个 token 时的绝对下界。</d-footnote></p>
 
 *为了让它在训练真实模型时派上用场，我们至少需要对模型参数或优化器进行部分分片。*
 
@@ -217,7 +217,7 @@ $$\text{In}[L_Z, B, D][i] \cdot_D W_\text{in}[L_Z, D, F][i] \cdot_F W_\text{out}
 
 与上表一样，令 $C$ = 每芯片 FLOPs，$W_{\text{ici}}$ = **双向**网络带宽，$X$ = 批被划分成的分片数<d-footnote>我们假设这一划分是在 ICI 网格上完成的，因此相关的网络带宽是 $W_\text{ici}$</d-footnote>。我们来计算执行相关矩阵乘法所需的时间 $$T_\text{math}$$，以及所需的通信时间 $$T_\text{comms}$$。由于这种并行方案在前向传播中不需要通信，我们只需要为反向传播计算这些量。
 
-*通信时间：*从前面的章节我们知道，在一维网格中执行一次 AllReduce 所需的时间只取决于被 AllReduce 的数组的总字节数以及 ICI 带宽 $W_\text{ici}$；具体来说，AllReduce 时间为 $2 \cdot \text{total bytes} / W_\text{ici}$。由于需要对 $W_\text{in}$ 和 $W_\text{out}$ 都做 AllReduce，每层有 2 次 AllReduce。每次 AllReduce 针对的是一个权重矩阵，即一个包含 $DF$ 个参数、也就是 $2DF$ 字节的数组。综合起来，单层中 AllReduce 的总时间为
+*通信时间：*从前面的章节我们知道，在一维网格中执行一次 AllReduce 所需的时间只取决于被 AllReduce 的数组的总字节数以及 ICI 带宽 $W_\text{ici}$；具体来说，AllReduce 时间为 $2 \cdot \text{总字节数} / W_\text{ici}$。由于需要对 $W_\text{in}$ 和 $W_\text{out}$ 都做 AllReduce，每层有 2 次 AllReduce。每次 AllReduce 针对的是一个权重矩阵，即一个包含 $DF$ 个参数、也就是 $2DF$ 字节的数组。综合起来，单层中 AllReduce 的总时间为
 
 $$\begin{align}
 T_\text{comms} &= \frac{2 \cdot 2 \cdot 2 \cdot D \cdot F}{W_\text{ici}}. \\
@@ -442,9 +442,9 @@ FSDP 和张量并行的好处在于它们可以结合使用。通过沿两个轴
 
 令 $$X$$ 为用于 FSDP 的芯片数，$$Y$$ 为用于张量并行的芯片数。令 $$N$$ 为切片中的芯片总数，$$N=XY$$。令 $$M_X$$ 和 $$M_Y$$ 分别为进行 FSDP 和 TP 的网格轴数量（二者之和大致应为 3）。我们只对前向传播建模，因为它每个 FLOP 对应的通信量最大。把上面算法中的通信加起来，我们有
 
-$$T_\text{FSDP comms}(B, X, Y) = \frac{2\cdot 2\cdot D \cdot F}{Y \cdot W_\text{ici} \cdot M_X}$$
+$$T_\text{FSDP 通信}(B, X, Y) = \frac{2\cdot 2\cdot D \cdot F}{Y \cdot W_\text{ici} \cdot M_X}$$
 
-$$T_\text{TP comms}(B, X, Y) = \frac{2 \cdot 2 \cdot B \cdot D}{X \cdot W_\text{ici} \cdot M_Y}$$
+$$T_\text{TP 通信}(B, X, Y) = \frac{2 \cdot 2 \cdot B \cdot D}{X \cdot W_\text{ici} \cdot M_Y}$$
 
 同样，总的 FLOPs 时间为
 
@@ -452,13 +452,13 @@ $$T_\text{math} = \frac{2\cdot 2 \cdot B \cdot D \cdot F}{N \cdot C}.$$
 
 为了简化分析，我们做两个假设：第一，允许 $X$ 和 $Y$ 取非整数值（只要它们为正且满足 $XY=N$）；第二，假设 $X$ 轴和 $Y$ 轴上的通信可以完全相互重叠。在第二个假设下，总通信时间为
 
-$$T_\text{comms} = \max\left(T_\text{FSDP comms}, T_\text{TP comms}\right)$$
+$$T_\text{comms} = \max\left(T_\text{FSDP 通信}, T_\text{TP 通信}\right)$$
 
 在探讨什么条件下会计算受限之前，我们先求出使总通信量最小的 $X$ 和 $Y$ 的最优值。由于 FLOPs 与 $X$ 和 $Y$ 无关，最优设置就是让通信最小的那个设置。为此，我们把上面的 $T_\text{comms}$ 用 $X$ 和 $N$（它是固定的，即系统中的芯片数）而不是 $X$ 和 $Y$ 来表示：
 
 $$T_\text{comms} (X) = \frac{4D}{W_\text{ici}} \max\left(\frac{F \cdot X}{N \cdot M_X}, \frac{B}{X \cdot M_Y}\right)$$
 
-由于 $T_\text{FSDP comms}$ 关于 $X$ 单调递增，而 $T_\text{TP comms}$ 关于 $X$ 单调递减，二者的最大值必然在 $T_\text{FSDP comms} = T_\text{TP comms}$ 时取到最小，此时
+由于 $T_\text{FSDP 通信}$ 关于 $X$ 单调递增，而 $T_\text{TP 通信}$ 关于 $X$ 单调递减，二者的最大值必然在 $T_\text{FSDP 通信} = T_\text{TP 通信}$ 时取到最小，此时
 
 $$\begin{align*}
 \frac{FX_{opt}}{M_X} = \frac{BN}{X_{opt} M_Y} \rightarrow \\
@@ -471,7 +471,7 @@ X_{opt} = \sqrt{\frac{B}{F} \frac{M_X}{M_Y} N}
 
 现在回到我们对每种并行策略都会问的那个问题：**在什么条件下会是计算受限的？** 由于 FLOPs 和通信可以重叠，当满足以下条件时，我们就是计算受限的：
 
-$$\max\left(T_\text{FSDP comms}, T_\text{TP comms}\right) < T_\text{math}$$
+$$\max\left(T_\text{FSDP 通信}, T_\text{TP 通信}\right) < T_\text{math}$$
 
 令 $\alpha \equiv C / W_\text{ici}$，即 ICI 算术强度，可以化简为：
 
@@ -510,8 +510,8 @@ $$ \frac{B}{N} > \frac{\alpha^2}{M_X M_Y F}$$
 下面是一个可以动手把玩的交互式动画，展示了不同批大小下的总计算时间和通信时间：
 
 <figure class="plotly-embed">
-  <iframe src="{{ 'assets/plotly/training-roofline.html' | relative_url }}" title="MLP roofline for mixed FSDP/TP" loading="lazy" scrolling="no"></iframe>
-  <figcaption><b>图：</b>TPU v5p 16x16x16（$D=8192$，$F=32768$）上 MLP 前向传播的计算时间和通信时间随批大小的变化，使用的是上文的 $T_\text{FSDP comms}$、$T_\text{TP comms}$ 和 $T_\text{math}$。拖动滑块可以改变 FSDP/TP 的划分。阴影区域内的任何批大小都是通信受限的。</figcaption>
+  <iframe src="{{ 'assets/plotly/training-roofline.html' | relative_url }}" title="混合 FSDP/TP 的 MLP Roofline" loading="lazy" scrolling="no"></iframe>
+  <figcaption><b>图：</b>TPU v5p 16x16x16（$D=8192$，$F=32768$）上 MLP 前向传播的计算时间和通信时间随批大小的变化，使用的是上文的 $T_\text{FSDP 通信}$、$T_\text{TP 通信}$ 和 $T_\text{math}$。拖动滑块可以改变 FSDP/TP 的划分。阴影区域内的任何批大小都是通信受限的。</figcaption>
 </figure>
 
 你会注意到这与上面的结论基本一致：最佳划分 FSDP=512、TP=8 在批大小超过约 4e5 时变为计算受限，而任何张量并行程度更高的划分在所有批大小下都保持通信受限。张量并行程度更低的划分则需要更大的批大小。
@@ -538,14 +538,14 @@ num_layers = len(jax.devices())
 
 key = jax.random.PRNGKey(0)
 
-# Pretend each layer is just a single matmul.
+# 假设每一层只是一个矩阵乘法（matmul）。
 x = jax.random.normal(key, (batch_size, d_model))
 weights = jax.random.normal(key, (num_layers, d_model, d_model))
 
 def layer_fn(x, weight):
   return x @ weight
 
-# Assume we have num_layers == num_pipeline_stages
+# 假设 num_layers == num_pipeline_stages
 intermediates = [x]
 for i in range(num_layers):
   x = layer_fn(x, weights[i])
@@ -555,14 +555,14 @@ for i in range(num_layers):
     x = jax.device_put(x, jax.devices()[i+1])
 
 def loss_fn(batch):
-  return jnp.mean(batch ** 2)  # make up some fake loss function
+  return jnp.mean(batch ** 2)  # 随便编一个假的损失函数
 
 loss, dx = jax.value_and_grad(loss_fn)(x)
 
 for i in range(num_layers - 1, -1, -1):
   _, f_vjp = jax.vjp(layer_fn, intermediates[i], weights[i])
-  dx, dw = f_vjp(dx)  # compute the jvp dx @ J(L)(x[i], W[i])
-  weights[i] = weights[i] - 0.01 * dw  # update our weights
+  dx, dw = f_vjp(dx)  # 计算 jvp dx @ J(L)(x[i], W[i])
+  weights[i] = weights[i] - 0.01 * dw  # 更新我们的权重
 
   if i != 0:
     dx = jax.device_put(dx, jax.devices()[i-1])
@@ -592,7 +592,7 @@ $$T_\text{comms} = \frac{2 \cdot 2 \cdot 2 \cdot DF}{M \cdot W_\text{dcn}}$$
 
 通信带宽随 $M$ 增长，因为与 ICI 不同，随着 ICI 域变大、拥有的 NIC 变多，总带宽也会增长。化简后可以发现，$T_\text{math} > T_\text{comms}$ 的条件是
 
-$$\frac{B}{\text{slice}} > \frac{C}{W_\text{dcn}}$$
+$$\frac{B}{\text{切片}} > \frac{C}{W_\text{dcn}}$$
 
 对于 TPU v5p，$\frac{C}{W_\text{dcn}}$ 约为 `4.59e14 / 6.25e9 = 73,440`。这告诉我们，要在 DCN 上高效扩展，每个 ICI 域都需要达到一个最小批大小，才能撑得住每个节点的出口通信。
 
@@ -625,7 +625,7 @@ $$\frac{B}{\text{slice}} > \frac{C}{W_\text{dcn}}$$
 
 $$\small
 \begin{array}{cc}
-\text{Strategy} & \text{Formula}\\
+\text{策略} & \text{公式}\\
 \hline
 \text{DP} & \text{In}[B_X, D] \cdot_D W_\text{in}[D, F] \cdot_F W_\text{out}[F, D] \rightarrow \text{Out}[B_X, D] \\
 \text{FSDP} & \text{In}[B_X, D] \cdot_D W_\text{in}[D_X, F] \cdot_F W_\text{out}[F, D_X] \rightarrow \text{Out}[B_X, D] \\
@@ -639,8 +639,8 @@ $$\small
 $$
 \small
 \begin{array}{ccc}
-\text{Strategy} & \text{Compute per layer} & \text{Comms per layer} \\
-& \text{(ignoring gating einsum)} & \text{(bytes, forward + backward pass)}\\
+\text{策略} & \text{每层计算} & \text{每层通信} \\
+& \text{（忽略门控 einsum）} & \text{（字节，前向 + 反向传播）}\\
 \hline
 \text{DP} & 4BDF/X + 8BDF/X & 0 + 8DF \\
 \text{FSDP} & 4BDF/X + 8BDF/X & 4DF + 8DF \\
@@ -651,7 +651,7 @@ $$
 
 * 纯数据并行很少有用，因为模型及其优化器状态占用的字节数 = 参数量的 10 倍。这意味着我们很少能在内存中放下超过几十亿个参数。
 
-* 当 $$\text{batch size per shard} < C / W$$（即网络的算术强度）时，数据并行和 FSDP 就会变成通信受限。对 ICI 来说这个值是 2,550，对 DCN 来说约为 71,000。使用更多并行轴可以提高这个值。
+* 当 $$\text{每分片批大小} < C / W$$（即网络的算术强度）时，数据并行和 FSDP 就会变成通信受限。对 ICI 来说这个值是 2,550，对 DCN 来说约为 71,000。使用更多并行轴可以提高这个值。
 
 * 当 $$\lvert Y\rvert > F / 2550$$ 时，张量并行会变成通信受限。**对大多数模型来说，这大约是 8-16 路。** 这与批大小无关。
 

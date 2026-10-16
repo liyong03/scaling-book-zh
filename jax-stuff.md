@@ -114,23 +114,23 @@ import jax.numpy as jnp
 
 Auto = jax.sharding.AxisType.Auto
 
-# This creates a fake set of 8 CPU devices so you can run this on a CPU without TPUs.
+# 这会创建一组虚拟的 8 个 CPU 设备，这样你就可以在没有 TPU 的 CPU 上运行这段代码。
 jax.config.update("jax_num_cpu_devices", 8)
 
-# This creates a 2D 4x2 mesh with axis names X and Y that JAX uses by default.
-# We explicitly tell JAX to let the XLA compiler infer sharding along these axes.
+# 这会创建一个 4x2 的二维 mesh，轴名为 X 和 Y，JAX 会默认使用它。
+# 我们显式地告诉 JAX，让 XLA 编译器沿这些轴推断分片。
 mesh = jax.make_mesh(axis_sizes=(4, 2), axis_names=('X', 'Y'), axis_types=(Auto, Auto))
 jax.set_mesh(mesh)
 
-# We create a matrix W and input activations In sharded across our devices.
+# 我们创建一个矩阵 W 和输入激活值 In，它们分片在我们的各个设备上。
 In = jnp.zeros((8, 2048), dtype=jnp.bfloat16, device=jax.NamedSharding(mesh, jax.P('X', 'Y')))
 W = jnp.zeros((2048, 8192), dtype=jnp.bfloat16, device=jax.NamedSharding(mesh, jax.P('Y', None)))
 
 def matmul_square(In, W):
   return jnp.einsum('bd,df->bf', jnp.square(In), W)
 
-# We can explicitly compile the sharded matmul function here. This adds all the
-# necessary comms (e.g. an AllReduce after the matmul).
+# 我们可以在这里显式编译这个分片的 matmul 函数。这会加入所有
+# 必要的通信（例如 matmul 之后的一个 AllReduce）。
 jit_matmul = jax.jit(matmul_square, out_shardings=jax.P('X', None)).lower(In, W).compile()
 
 out = jit_matmul(In, W)
@@ -149,10 +149,10 @@ out = jit_matmul(In, W)
 `jax.jit` 会自动为我们添加这些！我们实际上可以用 `jit_matmul.as_text()` 打印出 HLO，看到如下 HLO（做了大幅删节）：
 
 ```py
-# This fusion is the actual matmul of the sharded inputs and matrix
+# 这个 fusion 就是分片输入与矩阵之间实际的 matmul
 %fusion = bf16[2,8192]{1,0:T(4,128)(2,1)S(1)} fusion(bf16[2,1024]{1,0:T(4,128)(2,1)} %param, bf16[8192,1024]{1,0:T(8,128)(2,1)S(1)} %copy-done)
 
-# We reduce the partially summed results across devices
+# 我们在各设备之间对部分求和的结果做归约
 ROOT %AllReduce = bf16[2,8192]{1,0:T(4,128)(2,1)} AllReduce(bf16[2,8192]{1,0:T(4,128)(2,1)S(1)} %fusion)
 ```
 
@@ -188,10 +188,10 @@ import numpy as np
 
 Explicit = jax.sharding.AxisType.Explicit
 
-# Running on a TPU v5e 2x2. This assigns names to the two physical axes of the hardware.
+# 在 TPU v5e 2x2 上运行。这会为硬件的两个物理轴分配名称。
 mesh = jax.make_mesh(axis_sizes=(2, 2), axis_names=('X', 'Y'), axis_types=(Explicit, Explicit))
 
-# This tells JAX to use this mesh for all operations, so you can just specify the PartitionSpec P.
+# 这告诉 JAX 对所有操作都使用这个 mesh，因此你只需指定 PartitionSpec P 即可。
 jax.set_mesh(mesh)
 
 x = jax.device_put(np.arange(16, dtype=np.float32).reshape(8, 2), jax.P('X', 'Y'))
@@ -209,7 +209,7 @@ f(x)
 如你所见，JAX 把分片从输入（`x`）传播到了输出（`out`），这些分片在 trace 时可以通过 `jax.typeof` 查看。对于大多数操作，这些规则简单而显然，因为只有一种合理的选择（例如逐元素操作会保持相同的分片）。但对于某些操作，结果应如何分片是有歧义的，这时 JAX 会在 trace 时抛出错误，要求程序员显式提供 `out_sharding` 参数（例如 jnp.einsum、jnp.reshape 等）。我们再看一个存在冲突的例子：
 
 ```py
-# We create a matrix W and input activations In sharded across our devices.
+# 我们创建一个矩阵 W 和输入激活值 In，它们分片在我们的各个设备上。
 In = jnp.zeros((8, 2048), dtype=jnp.bfloat16, out_sharding=jax.P('X', 'Y'))
 W = jnp.zeros((2048, 8192), dtype=jnp.bfloat16, out_sharding=jax.P('Y', None))
 
@@ -219,7 +219,7 @@ def matmul_square(In, W):
   print(jax.typeof(W))  # bfloat16[2048@Y, 8192]
   return jnp.einsum('bd,df->bf', jnp.square(In), W)
 
-matmul_square(In, W)  # This will error
+matmul_square(In, W)  # 这里会报错
 ```
 
 这段代码会报如下错误：
@@ -264,7 +264,7 @@ jax.set_mesh(mesh)
 
 x = jnp.arange(0, 512, dtype=jnp.int32, out_sharding=jax.P(('x', 'y')))
 
-# This function will operate on 1/8th of the array.
+# 这个函数将作用于数组的 1/8。
 @jax.shard_map(in_specs=jax.P(('x', 'y')), out_specs=jax.P())
 def slice_and_average(x):
   assert x.shape == (512 // 8,)
@@ -298,8 +298,8 @@ import numpy as np
 
 Explicit = jax.sharding.AxisType.Explicit
 
-# This is intended to run on a TPU v5e-8 runtime. If you can't get this,
-# try setting jax.config.update('jax_num_cpu_devices', 8).
+# 这段代码旨在 TPU v5e-8 运行时上运行。如果你无法获得这种运行时，
+# 可以尝试设置 jax.config.update('jax_num_cpu_devices', 8)。
 #
 mesh = jax.make_mesh(axis_sizes=(2, 4), axis_names=('X', 'Y'), axis_types=(Explicit, Explicit))
 jax.set_mesh(mesh)
@@ -316,8 +316,8 @@ def matmul(lhs, rhs):
   return lhs @ rhs
 
 def collective_matmul_allgather_lhs_contracting(lhs, rhs):
-  # lhs is the looped operand; rhs is the local operand
-  axis_size = jax.lax.axis_size('Y')  # axis_size = 4 for this example
+  # lhs 是循环传递的操作数；rhs 是本地操作数
+  axis_size = jax.lax.axis_size('Y')  # 在本例中 axis_size = 4
   idx = jax.lax.axis_index('Y')
 
   chunk_size = lhs.shape[1]
@@ -326,9 +326,9 @@ def collective_matmul_allgather_lhs_contracting(lhs, rhs):
   def f(i, carrys):
     accum, lhs = carrys
     rhs_chunk = jax.lax.dynamic_slice_in_dim(rhs, (idx + i) % axis_size * chunk_size, chunk_size)
-    # Matmul for a chunk
+    # 对一个分块做 matmul
     update = lhs @ rhs_chunk
-    # Circular shift to the left
+    # 向左循环移位
     lhs = jax.lax.ppermute(
         lhs,
         axis_name='Y',
@@ -340,7 +340,7 @@ def collective_matmul_allgather_lhs_contracting(lhs, rhs):
   accum = jax.lax.pcast(accum, ('X', 'Y'), to='varying')
   accum, lhs = jax.lax.fori_loop(0, axis_size - 1, f, (accum, lhs), unroll=True)
 
-  # Compute the last chunk after the final permute to leave lhs in the state we found it
+  # 在最后一次 permute 之后计算最后一个分块，使 lhs 恢复到最初的状态
   i = axis_size - 1
   rhs_chunk = jax.lax.dynamic_slice_in_dim(rhs, (idx + i) % axis_size * chunk_size, chunk_size)
   update = lhs @ rhs_chunk
@@ -478,8 +478,8 @@ def moe_local(W: jnp.ndarray, A: jnp.ndarray, B: jnp.ndarray) -> jnp.ndarray:
     def expert_forward(carry, e):
         output = carry  # [S, F]
         mask = (B == e)[:, None]  # [S, 1]
-        expert_result = A @ W[e]  # [S, F] - this expert's transform of ALL tokens
-        output = output + expert_result * mask  # Only keep results for assigned tokens
+        expert_result = A @ W[e]  # [S, F] - 该专家对所有 token 的变换
+        output = output + expert_result * mask  # 只保留分配给该专家的 token 的结果
         return output, None
 
     output = jnp.zeros((S, F))
@@ -497,7 +497,7 @@ chunk_size = 128
 def matmul(W, x, B):
   i = 0
   outs = []
-  x = # sort x according to assignments
+  x = # 根据分配结果对 x 排序
   while (chunk := x[i:i+chunk_size]).any():
      chunk = all_to_all(chunk)
      outs.append(matmul_local(W, chunk))

@@ -1030,9 +1030,9 @@
     return `
     <div class="byline grid">
       <div class="authors-affiliations grid">
-        <h3 style="grid-column: 1; grid-row: 1;">Authors</h3>
+        <h3 style="grid-column: 1; grid-row: 1;">作者</h3>
         <h3></h3>
-        <h3>Affiliation</h3>
+        <h3>单位</h3>
         ${frontMatter.authors.map((author, index) => `
           <p class="author" style="grid-column: ${Math.ceil((index + 1) / half)}; grid-row: ${index % half + 2};">
             ${author.personalURL ? `
@@ -1047,10 +1047,10 @@
         `).join('')}
       </div>
       <div>
-        <h3>Published</h3>
+        <h3>发布日期</h3>
         ${frontMatter.publishedDate ? `
-          <p>${frontMatter.publishedMonth} ${frontMatter.publishedDay}, ${frontMatter.publishedYear}</p> ` : `
-          <p><em>Not published yet.</em></p>`}
+          <p>${frontMatter.publishedYear} 年 ${frontMatter.publishedDate.getMonth() + 1} 月 ${frontMatter.publishedDay} 日</p> ` : `
+          <p><em>尚未发布。</em></p>`}
       </div>
     </div>
   `;
@@ -14113,7 +14113,7 @@ d-citation-list .references .title {
 
         const heading = dom.createElement("h3");
         heading.id = "references";
-        heading.textContent = "References";
+        heading.textContent = "参考文献";
         element.appendChild(heading);
 
         list = dom.createElement("ol");
@@ -14309,7 +14309,7 @@ distill-header .nav a {
 
     if (typeof frontMatter.githubUrl !== "undefined") {
       html += `
-    <h3 id="updates-and-corrections">Updates and Corrections</h3>
+    <h3 id="updates-and-corrections">更新与勘误</h3>
     <p>`;
       if (frontMatter.githubCompareUpdatesUrl) {
         html += `<a href="${frontMatter.githubCompareUpdatesUrl}">View all changes</a> to this article since it was first published.`;
@@ -14322,14 +14322,14 @@ distill-header .nav a {
     const journal = frontMatter.journal;
     if (typeof journal !== "undefined" && journal.title === "Distill") {
       html += `
-    <h3 id="reuse">Reuse</h3>
+    <h3 id="reuse">转载</h3>
     <p>Diagrams and text are licensed under Creative Commons Attribution <a href="https://creativecommons.org/licenses/by/4.0/">CC-BY 4.0</a> with the <a class="github" href="${frontMatter.githubUrl}">source available on GitHub</a>, unless noted otherwise. The figures that have been reused from other sources don’t fall under this license and can be recognized by a note in their caption: “Figure from …”.</p>
     `;
     }
 
     if (typeof frontMatter.publishedDate !== "undefined") {
       html += `
-    <h3 id="citation">Citation</h3>
+    <h3 id="citation">引用</h3>
     <p>For attribution in academic contexts, please cite this work as</p>
     <pre class="citation short">${frontMatter.concatenatedAuthors}, "${frontMatter.title}", Distill, ${frontMatter.publishedYear}.</pre>
     <p>BibTeX citation</p>

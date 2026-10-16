@@ -139,14 +139,14 @@ with jax.profiler.trace("/tmp/tensorboard"):
   y = x @ x
   y.block_until_ready()
 
-# Now you can load TensorBoard in a Google Colab with
+# 现在你可以在 Google Colab 中这样加载 TensorBoard：
 #
 # !pip install -U xprof
 # !pip install -U protobuf
 # %load_ext tensorboard
 # %tensorboard --logdir=/tmp/tensorboard
 #
-# or externally with
+# 或者在外部这样加载：
 #
 # > tensorboard --logdir=/tmp/tensorboard
 #

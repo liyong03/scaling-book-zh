@@ -92,7 +92,7 @@ _styles: >
 **计算：** 深度学习模型本质上就是一堆矩阵乘法，每个矩阵乘法都由浮点乘法和加法“运算”（FLOPs）组成。加速器的速度决定了计算这些需要多长时间：
 
 $$\begin{equation}
-T_\text{math} = \frac{\text{Computation FLOPs}}{\text{Accelerator FLOPs/s}}
+T_\text{math} = \frac{\text{计算 FLOPs}}{\text{加速器 FLOPs/s}}
 \end{equation}$$
 
 例如，一块 NVIDIA H100 每秒大约可以执行 9.89e14 次 bfloat16<d-footnote>bf16 是 <a href="https://en.wikipedia.org/wiki/Bfloat16_floating-point_format">bfloat16</a> 的缩写，这是一种在机器学习中常用的 16 位浮点格式。</d-footnote> FLOPs，而一块 TPU v6e 可以执行 9.1e14 FLOPs/s。<d-footnote>H100 和 B200 通常只能达到标称峰值 FLOPs 的 80-85% 左右，而 TPU 在正常使用中可以更接近 95%。</d-footnote> 这意味着在 H100 上执行 1e12 FLOPs（大约）需要 `1e12 / 9.89e14 = 1.01ms`，而在 TPU v6e 上需要 `1e12 / 9.1e14 = 1.1ms`。<d-footnote>注意，这些芯片的定价不同，这里的比较并没有按成本做归一化。</d-footnote>
@@ -104,7 +104,7 @@ T_\text{math} = \frac{\text{Computation FLOPs}}{\text{Accelerator FLOPs/s}}
 无论通信发生在芯片内部还是芯片之间，我们都以 bytes/s 来衡量，并用下式估算总通信时间：
 
 $$\begin{equation}
-T_\text{comms} = \frac{\text{Communication Bytes}}{\text{Network/Memory Bandwidth Bytes/s}}
+T_\text{comms} = \frac{\text{通信字节数}}{\text{网络/内存带宽 Bytes/s}}
 \end{equation}$$
 
 通常（但并非总是如此），单个芯片内的计算可以与芯片内及芯片间的通信相互重叠。这意味着**我们可以用计算时间和通信时间中的最大值作为训练和推理时间的下界**。我们也可以**用它们之和作为上界**。在实践中，我们以最大值为目标进行优化，因为这样代数更简单，而且通过重叠通信与计算，我们通常可以相当接近这个界。如果我们以最大值为目标进行优化，那么上下界之间最多相差 2 倍，因为 $T_\text{math} + T_\text{comms} \leq 2 * \max(T_\text{math}, T_\text{comms})$。在此基础上，我们还可以通过对“重叠区域”和各种开销建模来进一步提高准确性，而这可以借助对你的具体模型和目标系统做性能分析（profiling）来获得依据。
@@ -122,22 +122,22 @@ T_\text{upper} = T_\text{math} + T_\text{comms}
 **定义：** 一个算法的算术强度，是它执行的总 FLOPs 与它需要通信的字节数（无论是芯片内部还是芯片之间）之比。
 
 $$\begin{equation}
-\text{Arithmetic Intensity} = \frac{\text{Computation FLOPs}}{\text{Communication Bytes}}
+\text{算术强度} = \frac{\text{计算 FLOPs}}{\text{通信字节数}}
 \end{equation}$$
 
 算术强度衡量的是一个操作的“每字节 FLOPs 数”。粗略地说，当算术强度较高时，$T_\text{math}$ 相对于 $T_\text{comms}$ 较大，我们通常能用上大部分可用的 FLOPs。反之，我们就会在通信上花费更多时间，浪费 FLOPs。发生这种转折的点就是硬件的“峰值算术强度”，即加速器峰值 FLOPs/s 与加速器带宽之比。
 
 $$\begin{align*}
-T_\text{math} > T_\text{comms} \Leftrightarrow \frac{\text{Computation FLOPs}} {\text{Accelerator FLOPs/s}} > \frac{\text{Communication Bytes}}{\text{Bandwidth Bytes/s}} & \\[0.5em]
-\Leftrightarrow \frac{\text{Computation FLOPs}}{\text{Communication Bytes}} > \frac{\text{Accelerator FLOPs/s}}{\text{Bandwidth Bytes/s}} & \\[0.5em]
-\Leftrightarrow \text{Intensity}(\text{Computation}) > \text{Intensity}(\text{Accelerator}) & \\
+T_\text{math} > T_\text{comms} \Leftrightarrow \frac{\text{计算 FLOPs}} {\text{加速器 FLOPs/s}} > \frac{\text{通信字节数}}{\text{带宽 Bytes/s}} & \\[0.5em]
+\Leftrightarrow \frac{\text{计算 FLOPs}}{\text{通信字节数}} > \frac{\text{加速器 FLOPs/s}}{\text{带宽 Bytes/s}} & \\[0.5em]
+\Leftrightarrow \text{强度}(\text{计算}) > \text{强度}(\text{加速器}) & \\
 \end{align*}$$
 
-$\text{Intensity}(\text{Accelerator})$ 这个量就是加速器达到峰值 FLOPs/s 时的算术强度。**对于 TPU v5e 的 MXU，这个值约为 240 FLOPs/byte**，因为 TPU 每秒可以执行 `1.97e14` FLOPs，并且每秒可以从 HBM 加载 `8.2e11` 字节。<d-footnote>MXU 是 TPU 上的矩阵乘法单元。这里特意说明这一点，是因为 TPU 上还有其他加速单元，比如负责逐元素运算的 VPU，它们的峰值 FLOPs/s 不同。</d-footnote> 这意味着如果一个算法的算术强度低于 240 FLOPs/byte，它就会受限于字节加载，因此我们无法充分利用硬件。<d-footnote>这只在算法从 HBM 加载权重并在 MXU 上运行时才成立。我们将在下一节讨论，有时可以把参数存放在 VMEM 中，它的带宽要高得多。许多算法也在 VPU 上运行，而 VPU 的性能特征不同。</d-footnote> 我们来看一个这样的例子：
+$\text{强度}(\text{加速器})$ 这个量就是加速器达到峰值 FLOPs/s 时的算术强度。**对于 TPU v5e 的 MXU，这个值约为 240 FLOPs/byte**，因为 TPU 每秒可以执行 `1.97e14` FLOPs，并且每秒可以从 HBM 加载 `8.2e11` 字节。<d-footnote>MXU 是 TPU 上的矩阵乘法单元。这里特意说明这一点，是因为 TPU 上还有其他加速单元，比如负责逐元素运算的 VPU，它们的峰值 FLOPs/s 不同。</d-footnote> 这意味着如果一个算法的算术强度低于 240 FLOPs/byte，它就会受限于字节加载，因此我们无法充分利用硬件。<d-footnote>这只在算法从 HBM 加载权重并在 MXU 上运行时才成立。我们将在下一节讨论，有时可以把参数存放在 VMEM 中，它的带宽要高得多。许多算法也在 VPU 上运行，而 VPU 的性能特征不同。</d-footnote> 我们来看一个这样的例子：
 
 **<span style="color:#7ab5ff">示例（点积）</span>：** 要以 bfloat16 精度计算两个向量的点积 `x • y: bf16[N], bf16[N] → bf16[1]`，我们需要从内存中加载 $x$ 和 $y$，它们各有 $2 * N = 2N$ 字节；执行 $N$ 次乘法和 $N-1$ 次加法；再把 $2$ 字节写回 HBM
 $$\begin{equation}
-\text{Intensity}(\text{dot product}) = \frac{\text{Total FLOPs}}{\text{Total Bytes}} = \frac{N + N - 1}{2N + 2N + 2} = \frac{2N - 1}{4N + 2} \rightarrow \frac{1}{2}
+\text{强度}(\text{点积}) = \frac{\text{总 FLOPs}}{\text{总字节数}} = \frac{N + N - 1}{2N + 2N + 2} = \frac{2N - 1}{4N + 2} \rightarrow \frac{1}{2}
 \end{equation}$$
 
 当 $N\rightarrow\infty$ 时成立。所以点积的算术强度为 $\frac{1}{2}$，换句话说，点积每加载一个字节只执行 0.5 次浮点运算。这意味着我们的算术强度低于硬件的算术强度，因此会是通信受限的。<d-footnote>上面的 240 在这里其实不是正确的比较对象，因为正如你将在下一节看到的，点积是在 VPU 而不是 MXU 上执行的。TPU v5p 的 VPU 每个核心每秒大约可以执行 7e12 FLOPs，所以它的临界算术强度约为 3，这意味着这里我们仍然有些通信受限。无论如何，我们的算术强度很低而且是常数，这意味着在大多数硬件上都很难做到计算受限。</d-footnote>
@@ -155,7 +155,7 @@ $$\begin{equation}
 我们来看看即将成为我们最爱的算法：矩阵乘法（又称 matmul）。给定两个矩阵 $X$ 和 $Y$，我们可以写成 $X * Y \rightarrow Z$，其中 $X$ 的形状为 $\text{bf16}[B, D]$，$Y$ 的形状为 $\text{bf16}[D, F]$，$Z$ 的形状为 $\text{bf16}[B, F]$。要完成这个矩阵乘法，我们需要加载 $2DF + 2BD$ 字节，执行 $2BDF$ FLOPs，并写回 $2BF$ 字节。<d-footnote>严格来说我们执行的是 $BF \times (2D - 1)$ FLOPs，但这已经足够接近了。它来自 $BDF$ 次乘法和 $BF * (D-1)$ 次加法。第 4 节有更多细节。</d-footnote> <d-footnote>虽然矩阵乘法的输出严格来说是 float32，但我们通常会在拷贝回 HBM 之前将其转换为 bfloat16。</d-footnote> 因此：
 
 $$\begin{equation}
-\text{Intensity}(\text{matmul}) = \frac{2BDF}{2BD + 2DF + 2BF} = \frac{BDF}{BD + DF + BF}
+\text{强度}(\text{矩阵乘法}) = \frac{2BDF}{2BD + 2DF + 2BF} = \frac{BDF}{BD + DF + BF}
 \end{equation}$$
 
 如果假设我们的“批大小（batch size）” $B$ 相对于 $D$ 和 $F$ 很小，就能得到一个很好的简化。于是我们得到
@@ -165,7 +165,7 @@ $$\begin{equation}
 \end{equation}$$
 
 $$\begin{equation}
-\text{Intensity}(\text{matmul}) > \text{Intensity}(\text{TPU}) \implies B > \frac{1.97e14}{8.20e11} = 240
+\text{强度}(\text{矩阵乘法}) > \text{强度}(\text{TPU}) \implies B > \frac{1.97e14}{8.20e11} = 240
 \end{equation}$$
 
 对于 Transformer 中的矩阵乘法，这是一个合理的假设，因为我们通常的局部（每个副本）token 批大小 $B < 1024$（*注意，不是序列数*），而 $D$ 和 $F > 8000$。因此，当每个副本<d-footnote>之所以说“每个副本”，是因为如果我们做某种模型分片来增加参与矩阵乘法的芯片数量，可用的计算能力和内存带宽会按相同比例扩展。因此，临界批大小是针对模型权重的每个独立副本而言的。</d-footnote>的批大小大于 240 个 token 时，我们通常就会变成计算受限——这是一条非常简单的规则！
@@ -182,13 +182,13 @@ $$\begin{equation}
 
 $T_\text{math}$ 显然是之前的一半，因为每块 TPU 只做一半的工作，即<d-footnote>我们忽略了把两个部分和相加所需的 FLOPs（再做 BF 次加法），但这基本可以忽略不计。</d-footnote>
 
-$$T_\text{math} = \frac{2BDF}{2 \cdot \text{Accelerator FLOPs/s}} = \frac{BDF}{1.97e14}$$
+$$T_\text{math} = \frac{2BDF}{2 \cdot \text{加速器 FLOPs/s}} = \frac{BDF}{1.97e14}$$
 
 那么 $T_\text{comms}$ 呢？它现在指的是芯片之间的通信时间！它就是发送的总字节数除以网络带宽，即
 
-$$T_\text{comms} = \frac{2BF}{\text{Network Bandwidth}} = \frac{2BF}{4.5e10}$$
+$$T_\text{comms} = \frac{2BF}{\text{网络带宽}} = \frac{2BF}{4.5e10}$$
 
-因此，当 $$\text{Intensity}(\text{matmul (2-chips)}) > \text{Intensity}(\text{TPU w.r.t. inter-chip network})$$ 时，我们就变成计算受限的（现在是相对于芯片间网络而言）；等价地说，当 $\frac{BDF}{2BF} = \frac{D}{2} > \frac{1.97e14}{4.5e10} = 4377$，即 $D > 8755$ 时。注意，与之前不同，现在的临界阈值取决于 $D$ 而不是 $B$！试着想想为什么会这样。这只是一个例子，但我们想强调的是，这类 Roofline 对于判断何时可以把一个操作并行到多个 TPU 上至关重要。
+因此，当 $$\text{强度}(\text{矩阵乘法（2 芯片）}) > \text{强度}(\text{TPU（相对于芯片间网络）})$$ 时，我们就变成计算受限的（现在是相对于芯片间网络而言）；等价地说，当 $\frac{BDF}{2BF} = \frac{D}{2} > \frac{1.97e14}{4.5e10} = 4377$，即 $D > 8755$ 时。注意，与之前不同，现在的临界阈值取决于 $D$ 而不是 $B$！试着想想为什么会这样。这只是一个例子，但我们想强调的是，这类 Roofline 对于判断何时可以把一个操作并行到多个 TPU 上至关重要。
 
 ## 几道练习题 {#a-few-problems-to-work}
 
@@ -205,7 +205,7 @@ $$T_\text{comms} = \frac{2BF}{\text{Network Bandwidth}} = \frac{2BF}{4.5e10}$$
 
 1. 因为参数以 int8 存储，每个参数占 1 字节，所以要从 HBM 加载 $$BD + DF$$ 字节，并写回 $$BF$$ 字节。
 2. 这与 bfloat16 下相同，只是理论上 int8 的 OPs/s 应该更快。所以仍然是 $2BDF$ 次 OPs。
-3. 算术强度为 $$2BDF / (BD + DF + BF)$$。如果像上面一样假设 $$B \ll D$$ 且 $$B \ll F$$，算术强度就是 $$2B$$，这意味着规则变为 $B > \text{HBM int8 arithmetic intensity} / 2$。代入给定的数字，这个 int8 算术强度为 `3.94e14 / 8.2e11 = 480`，所以规则是 $B > 480 / 2 = 240$。注意这基本没有变化！
+3. 算术强度为 $$2BDF / (BD + DF + BF)$$。如果像上面一样假设 $$B \ll D$$ 且 $$B \ll F$$，算术强度就是 $$2B$$，这意味着规则变为 $B > \text{HBM int8 算术强度} / 2$。代入给定的数字，这个 int8 算术强度为 `3.94e14 / 8.2e11 = 480`，所以规则是 $B > 480 / 2 = 240$。注意这基本没有变化！
 4. $$T_\text{math} = 2BDF / 3.94e14$$，$$T_\text{comms} = (BD + DF + BF) / 8.2e11$$，所以一个合理的下界是 $$\max(T_\text{math}, T_\text{comms})$$，上界是 $$T_\text{math} + T_\text{comms}$$。
 
 {% enddetails %}

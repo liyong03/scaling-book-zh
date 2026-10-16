@@ -116,7 +116,7 @@ _styles: >
 
 假设你已经训练好了一个 Transformer，现在想用它来生成一些新的序列。*归根结底，基准分数上升、损失曲线下降，都只是代理指标——真正动起手来时，是否会发生有意思的事情才是关键！*<d-footnote>从历史上看，你可以在完全不碰推理的情况下对 Transformer 做大量研究——基于打分的多项选择基准测试，无需完善的 KV 缓存或生成循环实现就能高效运行。这意味着，尤其是在研究代码库中，推理代码路径上往往有很多唾手可得的优化空间。</d-footnote>
 
-采样在概念上很简单。我们输入一个序列，心爱的 Transformer 就会吐出 $$\log p(\text{next token}_i \vert \text{previous tokens})$$，即所有可能的下一个 token 的对数概率。我们可以从这个分布中采样，得到一个新的 token。把这个 token 追加到序列末尾并重复这个过程，就能得到一个 token 序列，作为提示词（prompt）的续写。
+采样在概念上很简单。我们输入一个序列，心爱的 Transformer 就会吐出 $$\log p(\text{下一个 token}_i \vert \text{之前的 token})$$，即所有可能的下一个 token 的对数概率。我们可以从这个分布中采样，得到一个新的 token。把这个 token 追加到序列末尾并重复这个过程，就能得到一个 token 序列，作为提示词（prompt）的续写。
 
 {% include figure.liquid path="assets/img/naive-inference.png" class="img-fluid" caption="<b>图：</b>Transformer 的朴素采样。蓝色的 logits 给出了下一个 token 的分布，我们可以从中采样。注意每一步都会重新处理整个前缀，导致该算法的运行时间为 $\Theta(n^2)$。" %}
 
@@ -161,24 +161,24 @@ _styles: >
 
 无论位于 MLP 块还是注意力中，我们的所有线性运算在概念上都是一样的。它们的算术强度取决于批大小。我们在[第 1 节](../roofline)中做过这个推导，但值得再重复一遍。来看一个 $\text{bf16[B, D]}$ 批次与一个 $\text{bf16[D, F]}$ 矩阵之间的单次矩阵乘法。它可以是大的 MLP 块（$W_\text{in}$ 或 $W_\text{out}$），也可以是较小的注意力投影之一（$W_Q$、$W_K$、$W_V$、$W_O$）。为了完成这次矩阵乘法，我们需要把这两个数组从 HBM 加载到 MXU 中，执行乘法，再把结果写回 HBM。和之前一样，我们有：
 
-$$T_\text{math} = \frac{\text{Computation FLOPs}}{\text{Accelerator FLOPs/s}} = \frac{2BDF}{\text{Accelerator FLOPs/s}}$$
+$$T_\text{math} = \frac{\text{计算 FLOPs}}{\text{加速器 FLOPs/s}} = \frac{2BDF}{\text{加速器 FLOPs/s}}$$
 
-$$T_\text{comms} = \frac{\text{Communication Bytes}}{\text{Bandwidth Bytes/s}} = \frac{2BD + 2FD + 2BF}{\text{Bandwidth Bytes/s}}$$
+$$T_\text{comms} = \frac{\text{通信字节数}}{\text{带宽 Bytes/s}} = \frac{2BD + 2FD + 2BF}{\text{带宽 Bytes/s}}$$
 
 TPU 或 GPU 可以一边计算一边加载，从而让二者重叠，因此要做到计算受限，我们需要 $$T_\text{math} \geq T_\text{comms}$$，即：
 
-$$\frac{2BDF}{2BD + 2DF + 2BF} \geq \frac{\text{Accelerator FLOPs/s}}{\text{Bandwidth Bytes/s}} \underset{\text{TPU v5e}}{=} \frac{1.97E+14}{8.20E+11} = 240$$
+$$\frac{2BDF}{2BD + 2DF + 2BF} \geq \frac{\text{加速器 FLOPs/s}}{\text{带宽 Bytes/s}} \underset{\text{TPU v5e}}{=} \frac{1.97E+14}{8.20E+11} = 240$$
 
 其中右侧是硬件的算术强度。现在假设 $D$ 和 $F$ 相对于 $B$ 非常大（通常我们的批次最多为 500，而 $D$ 和 $F > 10k$），就可以利用 $\small{2BD + 2DF + 2BF \approx 2DF}$ 来简化分母，得到
 
 $$\begin{align*}
-\frac{2BDF}{2BD + 2DF + 2BF} \approx \frac{2BDF}{2DF} \geq \frac{\text{Accelerator FLOPs/s}}{\text{Bandwidth Bytes/s}} \\
+\frac{2BDF}{2BD + 2DF + 2BF} \approx \frac{2BDF}{2DF} \geq \frac{\text{加速器 FLOPs/s}}{\text{带宽 Bytes/s}} \\
 \underset{\text{TPU v5e}}{=} \frac{1.97E+14}{8.20E+11} \implies B \geq 240 = B_{\text{crit}}
 \end{align*}$$
 
-如果我们对权重进行量化，或在矩阵乘法中使用更低精度的 FLOPs，这个临界批大小就会改变。例如，如果把权重量化为 int8 或 fp8，$B_\text{crit}$ 会降低 2 倍。如果用 int8 或 fp8 进行 FLOPs 计算，$B_\text{crit}$ 会增大 2 倍。因此，如果令 $\beta = \text{bits per param} / \text{bits per activation}$，$\alpha_\text{hbm} = C / W_\text{hbm}$，那么临界批大小实际上是 $B_\text{crit} = \beta \alpha_\text{hbm}$。
+如果我们对权重进行量化，或在矩阵乘法中使用更低精度的 FLOPs，这个临界批大小就会改变。例如，如果把权重量化为 int8 或 fp8，$B_\text{crit}$ 会降低 2 倍。如果用 int8 或 fp8 进行 FLOPs 计算，$B_\text{crit}$ 会增大 2 倍。因此，如果令 $\beta = \text{每个参数的位数} / \text{每个激活值的位数}$，$\alpha_\text{hbm} = C / W_\text{hbm}$，那么临界批大小实际上是 $B_\text{crit} = \beta \alpha_\text{hbm}$。
 
-<p markdown=1 class="takeaway">**要点：** 当且仅当（*iff*）每个副本的 **token** 批大小大于 $B_\text{crit} = C / W_\text{hbm} \cdot (\text{bits per param} / \text{bits per activation}) = \beta \cdot \alpha_\text{hbm}$ 时，Transformer 的矩阵乘法才是计算受限的。对于 TPU v5e 上的 bf16 激活值，这个值是 240 个 token。对于 H100，大约是 280 个 token。</p>
+<p markdown=1 class="takeaway">**要点：** 当且仅当（*iff*）每个副本的 **token** 批大小大于 $B_\text{crit} = C / W_\text{hbm} \cdot (\text{每个参数的位数} / \text{每个激活值的位数}) = \beta \cdot \alpha_\text{hbm}$ 时，Transformer 的矩阵乘法才是计算受限的。对于 TPU v5e 上的 bf16 激活值，这个值是 240 个 token。对于 H100，大约是 280 个 token。</p>
 
 训练期间，所有矩阵乘法都会有很高的算术强度，因为我们在一个非常大的批次上复用同一份权重。**这种高算术强度同样适用于预填充，因为用户的提示词通常有数百甚至数千个 token 长。** 正如之前所见，TPUv5e 的硬件算术强度是 240，因此如果把一个长于 240 个 token 的序列输入到以 bf16 运行在该硬件上的稠密模型中，我们预计会是计算受限的，一切都没问题。比这更短的提示词在技术上可以批处理在一起以获得更高的利用率，但通常没有必要。
 
@@ -204,7 +204,7 @@ $$\begin{align*}
 
 综合起来，我们得到：
 
-$$\text{Multiheaded Attention Arithmetic Intensity} = \frac{4BSTD}{4BSD + 4BTD} = \frac{ST}{S+T}$$
+$$\text{多头注意力算术强度} = \frac{4BSTD}{4BSD + 4BTD} = \frac{ST}{S+T}$$
 
 对于预填充，由于我们做的是自注意力，$S=T$，所以上式简化为 $T^2 / 2T = T / 2$。这很好，因为它意味着**预填充期间注意力的算术强度为 $\Theta(T)$**。也就是说，注意力很容易做到计算受限。只要序列长度足够大，就没问题！
 
@@ -225,19 +225,19 @@ $$S \gg T = 1 \implies \frac{ST}{S+T} \approx 1$$
 根据上面的推导，我们可以为优化时应追求的步骤时间得出相当不错的界限。**（注意：如果说我们希望读者从整章中只记住一件事，那就是下面这些内容。）** 对于生成期间的小批大小（这很常见），我们可以假设注意力块和 MLP 块都受内存带宽限制，从而给出每步延迟的下界：
 
 $$\begin{equation*}
-\text{Theoretical Min Step Time} = \frac{\text{Batch Size} \times \text{KV Cache Size} + \text{Parameter Size}}{\text{Total Memory Bandwidth}}
+\text{理论最小步时间} = \frac{\text{批大小} \times \text{KV 缓存大小} + \text{参数大小}}{\text{总内存带宽}}
 \end{equation*}$$
 
 类似地，对于吞吐量：
 
 $$\begin{equation*}
-\text{Theoretical Max Tokens/s} = \frac{\text{Batch Size} \times \text{Total Memory Bandwidth}}{\text{Batch Size} \times \text{KV Cache Size} + \text{Parameter Size}}
+\text{理论最大 Tokens/s} = \frac{\text{批大小} \times \text{总内存带宽}}{\text{批大小} \times \text{KV 缓存大小} + \text{参数大小}}
 \end{equation*}$$
 
 最终，随着批大小的增长，FLOPs 开始超过参数加载成为主导，因此在实践中我们有一个更一般的公式：
 
 $$\begin{align}
-\tiny \text{Theoretical Step Time (General)} = \underbrace{\frac{\text{Batch Size} \times \text{KV Cache Size}}{\tiny \text{Total Memory Bandwidth}}}_{\text{Attention (always bandwidth-bound)}} + \underbrace{\max\left(\frac{2 \times \text{Batch Size} \times \text{Parameter Count}}{\text{Total FLOPs/s}}, \frac{\text{Parameter Size}}{\text{Total Memory Bandwidth}}\right)}_{\tiny \text{MLP (can be compute-bound)}}
+\tiny \text{理论步时间（一般情况）} = \underbrace{\frac{\text{批大小} \times \text{KV 缓存大小}}{\tiny \text{总内存带宽}}}_{\text{注意力（始终带宽受限）}} + \underbrace{\max\left(\frac{2 \times \text{批大小} \times \text{参数量}}{\text{总 FLOPs/s}}, \frac{\text{参数大小}}{\text{总内存带宽}}\right)}_{\tiny \text{MLP（可能计算受限）}}
 \end{align}$$
 
 其中注意力部分（左侧）永远不会是计算受限的，因此不需要 FLOPs 的 Roofline。这些公式对于粗略估算非常有用，例如：
@@ -296,13 +296,13 @@ $$\begin{align}
 
 **主要区别在于 KV 缓存**。它保存了所有过去 token 的 key 和 value 投影，其大小只受最大允许序列长度的限制。$$T$$ 个 token 的总大小为
 
-$$\text{KV cache size} = 2 \cdot \text{bytes per float} \cdot H \cdot K \cdot L \cdot T$$
+$$\text{KV 缓存大小} = 2 \cdot \text{每个浮点数的字节数} \cdot H \cdot K \cdot L \cdot T$$
 
 其中 $$H$$ 是每个头的维度，$$K$$ 是 KV 头的数量，$$L$$ 是层数，因子 2 来自同时存储 key 和 value。
 
 **即使批大小和上下文长度都不算大，它也会迅速膨胀**。对于 LLaMA-13B，单条长度为 8192 的序列在 bf16 下的 KV 缓存为
 
-$$8192\ (T) \times 40\ (K) \times 128\ (H) \times 40\ (L) \times 2\ (\text{bytes}) \times 2 = 6.7 \text{GB}$$
+$$8192\ (T) \times 40\ (K) \times 128\ (H) \times 40\ (L) \times 2\ (\text{字节}) \times 2 = 6.7 \text{GB}$$
 
 **只需 4 条这样的序列，就超过了参数的内存占用！** 需要说明的是，LLaMA 2 并没有针对长上下文下的 KV 缓存大小做优化（情况并不总是这么糟，因为通常 $K$ 要小得多，比如 LLaMA-3），但这个例子仍然很有说明性。在估算内存或延迟时，我们不能忽略 KV 缓存。
 
@@ -390,9 +390,9 @@ Paged Attention<d-cite key="paged"></d-cite> 是在此基础上的改进：它�
 
 **关于生成中 ICI 界限的说明：** 训练时我们希望是计算受限的，所以 Roofline 分析关注的是 ICI 通信何时比 FLOPs 耗时更长。然而在生成期间，如果我们受限于参数加载的内存带宽，就可以把模型分片增加到超过这一点，以极小的吞吐量代价（以 tokens/sec/chip 计）改善延迟。更多的模型分片意味着有更多的 HBM 可用来加载权重，而 FLOPs 并不重要。<d-footnote>意思是 FLOPs 时间并不是瓶颈，所以我们需要担心的是 ICI 时间超过参数加载时间。</d-footnote> 我们来看看在 ICI 通信成为瓶颈之前，我们能做多少路模型并行。
 
-$$\begin{align*}T_\text{HBM comms} = \frac{2DF}{Y \cdot W_\text{hbm}} && T_\text{ICI comms} = \frac{2BD}{W_\text{ici}}\end{align*}$$
+$$\begin{align*}T_\text{HBM 通信} = \frac{2DF}{Y \cdot W_\text{hbm}} && T_\text{ICI 通信} = \frac{2BD}{W_\text{ici}}\end{align*}$$
 
-$$T_\text{ICI comms} > T_\text{HBM comms} \rightarrow \frac{W_\text{hbm}}{W_\text{ici}} > \frac{F}{Y \cdot B} \rightarrow Y > F / (B \cdot \beta)$$
+$$T_\text{ICI 通信} > T_\text{HBM 通信} \rightarrow \frac{W_\text{hbm}}{W_\text{ici}} > \frac{F}{Y \cdot B} \rightarrow Y > F / (B \cdot \beta)$$
 
 其中 $\beta = W_\text{hbm} / W_\text{ici}$。对于 TPU v5e 和 TPU v6e，这个数通常约为 8。这意味着，例如当 $F$ 为 16,384、$B$ 为 32 时，理论上我们可以做到 `16384 / (32 * 8) = 64` 路模型并行，而不会对吞吐量造成明显影响。这里假设我们能把 KV 缓存完全做 64 路分片，而这很难做到：我们将在下文讨论。
 
@@ -581,7 +581,7 @@ Engine 接口（实现见[这里](https://github.com/google/JetStream/blob/445f1
 
 (3) KV 缓存大小保持不变，因为 MoE 的特性丝毫不改变注意力机制。
 
-(4) 这仍然是 $2 \cdot \text{activated params} \cdot T$。因此为 $2 * \text{31.2e9} * T$。
+(4) 这仍然是 $2 \cdot \text{激活参数量} \cdot T$。因此为 $2 * \text{31.2e9} * T$。
 
 {% enddetails %}
 
@@ -610,17 +610,17 @@ Engine 接口（实现见[这里](https://github.com/google/JetStream/blob/445f1
 我们来推导 $T_\text{math}$ 和 $T_\text{comms}$。所有 FLOPs 都是完全分片的，因此和之前一样有 $T_\text{math} = 4BDF / (N \cdot C)$，但通信量现在变为
 
 $$\begin{align*}
-T_\text{2D comms} = \frac{2BD}{2X \cdot W_\text{ici}} + \frac{4BF}{YZ \cdot W_\text{ici}} + \frac{2BD}{2X \cdot W_\text{ici}} = \frac{2BD}{X \cdot W_\text{ici}} + \frac{4BF}{YZ \cdot W_\text{ici}}
+T_\text{2D 通信} = \frac{2BD}{2X \cdot W_\text{ici}} + \frac{4BF}{YZ \cdot W_\text{ici}} + \frac{2BD}{2X \cdot W_\text{ici}} = \frac{2BD}{X \cdot W_\text{ici}} + \frac{4BF}{YZ \cdot W_\text{ici}}
 \end{align*}$$
 
 这里需要注意，AllReduce 的开销是两倍，并且我们按每个操作所跨越的轴数对通信量进行缩放。假设我们可以自由选择拓扑，并假设 $F=4D$（如 LLaMA-2 中那样），我们断言（通过一些基础的微积分）$X$、$Y$ 和 $Z$ 的最优取值为 $X = \sqrt{N / 8}$、$YZ = \sqrt{8N}$，因此总通信量为
 
-$$T_\text{2D comms} = \frac{2B}{W_\text{ici}} \left(\frac{D}{X} + \frac{8D}{YZ}\right) = \frac{\sqrt{128} BD}{\sqrt{N} \cdot W_\text{ici}} \approx \frac{11.3 BD}{\sqrt{N} \cdot W_\text{ici}}$$
+$$T_\text{2D 通信} = \frac{2B}{W_\text{ici}} \left(\frac{D}{X} + \frac{8D}{YZ}\right) = \frac{\sqrt{128} BD}{\sqrt{N} \cdot W_\text{ici}} \approx \frac{11.3 BD}{\sqrt{N} \cdot W_\text{ici}}$$
 
-首先，照搬上文的结果，普通的 1D 模型并行有 $T_\text{model parallel comms} = 4BD / (3 \cdot W_\text{ici})$，那么新方案的通信量什么时候更小？我们有
+首先，照搬上文的结果，普通的 1D 模型并行有 $T_\text{模型并行通信} = 4BD / (3 \cdot W_\text{ici})$，那么新方案的通信量什么时候更小？我们有
 
 $$\begin{align*}
-T_\text{model parallel comms} > T_\text{2D comms} \iff \frac{4BD}{3 \cdot W_\text{ici}} > \frac{\sqrt{128} BD}{\sqrt{N} \cdot W_\text{ici}} \\
+T_\text{模型并行通信} > T_\text{2D 通信} \iff \frac{4BD}{3 \cdot W_\text{ici}} > \frac{\sqrt{128} BD}{\sqrt{N} \cdot W_\text{ici}} \\
 \iff N > 128 \cdot \left(\frac{3}{4}\right)^2 = 72
 \end{align*}$$
 
@@ -677,9 +677,9 @@ $$T_{total} = \max\left(\frac{T_{min} \cdot |X|}{2}, \frac{B}{W_{ICI}}\right)$$
 
 由于在以延迟为优化目标的推理中移动的数据量相对较少，激活值上的集合通信往往受延迟项限制（尤其是在小批大小下）。我们可以很容易地直观理解延迟：数一数完成操作之前需要经过多少跳即可。
 
-在 TPU 上，如果通信中与张量大小相关的部分每跳不到 1 微秒（一跳是指两个相邻设备之间的通信），我们就可能会被实际分派集合通信的固定开销所限制。在 `4.5e10` 的单向 ICI 带宽下，当 $$(\text{bytes} / n_\text{shards}) / 4.5e10 < 1e-6$$ 时，ICI 通信就会变为受延迟限制。对于 8 路 Megatron 分片，也就是 `buffer_size < 360kB` 时。**这在推理中其实并不算小：** 在 `BS=16`、`D=8192` 且使用 int8 时，我们的激活值会占用 `16*8192=131kB`，因此已经是受延迟限制的了。
+在 TPU 上，如果通信中与张量大小相关的部分每跳不到 1 微秒（一跳是指两个相邻设备之间的通信），我们就可能会被实际分派集合通信的固定开销所限制。在 `4.5e10` 的单向 ICI 带宽下，当 $$(\text{字节} / n_\text{shards}) / 4.5e10 < 1e-6$$ 时，ICI 通信就会变为受延迟限制。对于 8 路 Megatron 分片，也就是 `buffer_size < 360kB` 时。**这在推理中其实并不算小：** 在 `BS=16`、`D=8192` 且使用 int8 时，我们的激活值会占用 `16*8192=131kB`，因此已经是受延迟限制的了。
 
-<p markdown=1 class="takeaway">**要点：** 当 $$\text{total bytes} < W_{ICI} \times 1e-6$$ 时，我们的通信会变为受延迟限制。例如，在沿 $$Y$$ 做模型并行时，在 int8 下当 $$Y > BD / 45,000$$ 时就会受延迟限制。</p>
+<p markdown=1 class="takeaway">**要点：** 当 $$\text{总字节数} < W_{ICI} \times 1e-6$$ 时，我们的通信会变为受延迟限制。例如，在沿 $$Y$$ 做模型并行时，在 int8 下当 $$Y > BD / 45,000$$ 时就会受延迟限制。</p>
 
 这里可以和计算的 Roofline 模型做一个类比——我们在承担一些小操作的固定开销（通信的延迟、矩阵乘法的内存带宽）。
 
@@ -707,7 +707,7 @@ $$T_{total} = \max\left(\frac{T_{min} \cdot |X|}{2}, \frac{B}{W_{ICI}}\right)$$
 
 {% include figure.liquid path="assets/img/spec-sampling3.png" class="img-fluid" caption="<b>图：</b>这张图展示了 Chinchilla（DeepMind 的一个 70B 模型）搭配一个 4B 参数草稿模型（小模型）时的每步延迟和投机成功率。对于 XSum（一个自然语言数据集），理想的投机长度大约是向前 3-4 个 token；而 HumanEval（一个代码数据集）更可预测，更激进的投机能带来收益。" %}
 
-**对于非贪心解码，这又是如何工作的？** 这会稍微复杂一些，但本质上可以归结为一个受 Metropolis-Hastings 启发的算法：我们从 logits 中得到 $$P_{\text{draft model}}(\text{chosen token})$$ 和 $$P_{\text{target model}}(\text{chosen token})$$，如果这两个概率之比小于某个阈值，就以一定概率拒绝所选的 token。
+**对于非贪心解码，这又是如何工作的？** 这会稍微复杂一些，但本质上可以归结为一个受 Metropolis-Hastings 启发的算法：我们从 logits 中得到 $$P_{\text{草稿模型}}(\text{选中的 token})$$ 和 $$P_{\text{目标模型}}(\text{选中的 token})$$，如果这两个概率之比小于某个阈值，就以一定概率拒绝所选的 token。
 
 这[两篇](https://arxiv.org/abs/2211.17192)[论文](https://arxiv.org/abs/2302.01318)同时推导出了这一方法，并给出了它在实践中如何运作的很好的示例。
 

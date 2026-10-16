@@ -414,9 +414,9 @@ GPU 可以执行与 TPU 相同的所有集合通信：ReduceScatter、AllGather�
 
 ### 节点内集合通信 {#intra-node-collectives}
 
-**AllGather 或 ReduceScatter：** 对于节点级的 AllGather 或 ReduceScatter，可以像 TPU 一样沿环执行，每一跳都使用完整的 GPU 到 GPU 带宽。将 GPU 任意排序，然后利用完整的 GPU 到 GPU 带宽把数组的一部分沿环发送。<d-footnote>也可以这样理解：每个 GPU 把自己大小为 $\text{bytes} / N$ 的分块发送给其他 $N - 1$ 个 GPU，总通信量为 $(N - 1) * N * bytes / N$ 字节，得到的结果相同。</d-footnote>每一跳的开销为 $T_\text{hop} = \text{bytes} / (N * \text{GPU egress bandwidth})$，因此总开销为
+**AllGather 或 ReduceScatter：** 对于节点级的 AllGather 或 ReduceScatter，可以像 TPU 一样沿环执行，每一跳都使用完整的 GPU 到 GPU 带宽。将 GPU 任意排序，然后利用完整的 GPU 到 GPU 带宽把数组的一部分沿环发送。<d-footnote>也可以这样理解：每个 GPU 把自己大小为 $\text{字节} / N$ 的分块发送给其他 $N - 1$ 个 GPU，总通信量为 $(N - 1) * N * bytes / N$ 字节，得到的结果相同。</d-footnote>每一跳的开销为 $T_\text{hop} = \text{字节} / (N * \text{GPU 出口带宽})$，因此总开销为
 
-$$T_\text{AG or RS comms} = \frac{\text{bytes} \cdot (N - 1)}{N \cdot \text{GPU egress bandwidth}} \rightarrow \frac{\text{bytes}}{\text{GPU egress bandwidth}}$$
+$$T_\text{AG 或 RS 通信} = \frac{\text{字节} \cdot (N - 1)}{N \cdot \text{GPU 出口带宽}} \rightarrow \frac{\text{字节}}{\text{GPU 出口带宽}}$$
 
 你会注意到这与 TPU 上完全相同。对于 AllReduce，可以像往常一样组合 RS + AG，开销为两倍。
 
@@ -424,7 +424,7 @@ $$T_\text{AG or RS comms} = \frac{\text{bytes} \cdot (N - 1)}{N \cdot \text{GPU 
 
 如果你关心延迟（例如数组非常小时），可以做树形归约：先在 2 个一组内做 AllReduce，然后是 4 个、8 个，总共只需 $\log(N)$ 跳而不是 $N - 1$ 跳，不过总开销仍然相同。
 
-<p markdown=1 class="takeaway">**要点：** 在单个节点内对 B 字节的数组做 AllGather 或 ReduceScatter，开销约为 $T_\text{comms} = B * (8 - 1) / (8 * W_\text{GPU egress}) \approx B / W_\text{GPU egress}$。理论上，在 H100 上约为 $B  / \text{450e9}$，在 B200 上约为 $B / \text{900e9}$。除非启用了网内归约，否则 AllReduce 的开销是它的 2 倍。</p>
+<p markdown=1 class="takeaway">**要点：** 在单个节点内对 B 字节的数组做 AllGather 或 ReduceScatter，开销约为 $T_\text{comms} = B * (8 - 1) / (8 * W_\text{GPU 出口}) \approx B / W_\text{GPU 出口}$。理论上，在 H100 上约为 $B  / \text{450e9}$，在 B200 上约为 $B / \text{900e9}$。除非启用了网内归约，否则 AllReduce 的开销是它的 2 倍。</p>
 
 <b markdown=1 style="color: #57cf57;">小测验 1 [AllGather 耗时]：</b>使用一个具有 450 GB/s 全双工带宽的 8xH100 节点，AllGather(bf16[B<sub>X</sub>, F]) 需要多长时间？设 $B=1024$，$F=16,384$。
 
@@ -436,7 +436,7 @@ $$T_\text{AG or RS comms} = \frac{\text{bytes} \cdot (N - 1)}{N \cdot \text{GPU 
 
 **AllToAll：** 节点内的 GPU 之间是全互连（all-to-all）的，这让 AllToAll 变得……相当简单。每个 GPU 直接发送到目标节点即可。在节点内，对于 B 字节，每个 GPU 持有 $B / N$ 字节，并向 $N - 1$ 个目标节点各发送 $(B / N^2)$ 字节，总计
 
-$$T_\text{AllToAll comms} = \frac{B \cdot (N - 1)}{W \cdot N^2} \approx \frac{B}{W \cdot N}$$
+$$T_\text{AllToAll 通信} = \frac{B \cdot (N - 1)}{W \cdot N^2} \approx \frac{B}{W \cdot N}$$
 
 与之对比，TPU 上的开销为 $B / (4W)$。因此，在单个节点内，我们在运行时间上获得了理论上 2 倍的加速（$B / 4W$ 对比 $B / 8W$）。
 
@@ -451,11 +451,11 @@ $(N-1)/N \cdot \min(k/N, 1) \cdot B / (W \cdot N)$。<d-footnote>真实开销实
 
 {% enddetails %}
 
-<p markdown=1 class="takeaway">**要点：** 在单个节点内的 GPU 上对 $B$ 字节的数组做 AllToAll，开销约为 $T_\text{comms} = (B \cdot (8 - 1)) / (8^2 \cdot W_\text{GPU egress}) \approx B / (8 \cdot W_\text{GPU egress})$。对于不规则（top-$k$）AllToAll，开销会进一步降低到 $(B \cdot k) / (64 \cdot W_\text{GPU egress})$。</p>
+<p markdown=1 class="takeaway">**要点：** 在单个节点内的 GPU 上对 $B$ 字节的数组做 AllToAll，开销约为 $T_\text{comms} = (B \cdot (8 - 1)) / (8^2 \cdot W_\text{GPU 出口}) \approx B / (8 \cdot W_\text{GPU 出口})$。对于不规则（top-$k$）AllToAll，开销会进一步降低到 $(B \cdot k) / (64 \cdot W_\text{GPU 出口})$。</p>
 
 **实测结果：** 下面是在 8xH100 节点上 AllReduce 带宽的实测结果。Algo BW 是测得的带宽（字节数 / 运行时间），Bus BW 按 $2 \cdot W \cdot (8 - 1) / 8$ 计算，理论上衡量的是实际链路带宽。你会注意到我们确实能达到接近 370GB/s，低于 450GB/s 但相当接近，不过要到每个设备约 10GB 时才行。这意味着，尽管这些估算在理论上是正确的，但需要很大的消息才能真正达到。
 
-{% include figure.liquid path="assets/gpu/gpu-all-reduce-bw.png" class="img-fluid" caption="<b>图：</b>关闭 SHARP 时 8xH100 节点的 AllReduce 吞吐量。蓝色曲线是实测链路带宽，由实测结果按 $2 * \text{bytes} * (N - 1) / (N * \text{runtime})$ 计算得到。注意，即便是 10GB 的超大数组，我们也没能特别接近宣称的 450GB/s 带宽。" %}
+{% include figure.liquid path="assets/gpu/gpu-all-reduce-bw.png" class="img-fluid" caption="<b>图：</b>关闭 SHARP 时 8xH100 节点的 AllReduce 吞吐量。蓝色曲线是实测链路带宽，由实测结果按 $2 * \text{字节} * (N - 1) / (N * \text{运行时间})$ 计算得到。注意，即便是 10GB 的超大数组，我们也没能特别接近宣称的 450GB/s 带宽。" %}
 
 这是个实实在在的问题，因为它让我们能做出的任何理论论断都显著复杂化。例如，即使是对一个大小合理的数组做 AllReduce，比如 LLaMA-3 70B 的 MLP（大小为 `bf16[8192, 28672]`，或在 8 路模型分片下为 `bf16[8192, 3584] = 58MB`），也只能达到约 150GB/s，而峰值为 450GB/s。相比之下，TPU 在小得多的消息大小下就能达到峰值带宽（见附录 B）。
 
@@ -467,7 +467,7 @@ $(N-1)/N \cdot \min(k/N, 1) \cdot B / (W \cdot N)$。<d-footnote>真实开销实
 
 理论上，这几乎能把 AllReduce 的开销减半，因为每个 GPU 可以把数据发送到顶层交换机，由交换机本身执行归约并把结果广播给每个 GPU，而无需每个 GPU 发出（egress）两次数据，同时还降低了网络延迟。
 
-$$T_\text{SHARP AR comms} = \frac{\text{bytes}}{\text{GPU egress bandwidth}}$$
+$$T_\text{SHARP AR 通信} = \frac{\text{字节}}{\text{GPU 出口带宽}}$$
 
 注意这是精确的，并没有相差 $1/N$ 的因子，因为每个 GPU 先发出 $B \cdot (N - 1) / N$，然后接收其本地分片的部分归约结果（流入 $B/N$），完成归约，再次发出 $B/N$，然后接收完全归约后的结果（流入 $B \cdot (N - 1) / N$），最终恰好流入 $B$ 字节。
 
@@ -483,33 +483,33 @@ $$T_\text{SHARP AR comms} = \frac{\text{bytes}}{\text{GPU egress bandwidth}}$$
 
 **这有多大开销？** 作为一阶近似，由于我们拥有完整的对分带宽（bisection bandwidth），AllGather 或 ReduceScatter 的开销大致等于缓冲区字节数除以节点出口带宽（H100 上为 400GB/s），*与树形归约的任何细节无关*。
 
-$$T_\text{AG or RS comms} = \frac{\text{bytes}}{W_\text{node egress}} \underset{H100}{=} \frac{\text{bytes}}{\text{400e9}}$$
+$$T_\text{AG 或 RS 通信} = \frac{\text{字节}}{W_\text{节点出口}} \underset{H100}{=} \frac{\text{字节}}{\text{400e9}}$$
 
 其中 $W_\text{node}$ egress 对于上述 H100 网络通常为 400GB/s（每个节点有 8 条 400Gbps IB 链路出口）。最直观的理解方式是想象在*集群中的每个节点*上做一次环形归约。由于胖树拓扑，我们总能构造一个任意两个节点之间都有 $W_\text{node}$ egress 带宽的环，并做常规归约。节点级归约（几乎）永远不会成为瓶颈，因为它的总带宽更高、延迟更低，不过一般情况下开销为
 
-$$T_\text{total} = \max(T_\text{comms at node}, T_\text{comms in scale-out network}) = \max\left[\frac{\text{bytes}}{W_\text{GPU egress}}, \frac{\text{bytes}}{W_\text{node egress}}\right]$$
+$$T_\text{total} = \max(T_\text{节点级通信}, T_\text{横向扩展网络中的通信}) = \max\left[\frac{\text{字节}}{W_\text{GPU 出口}}, \frac{\text{字节}}{W_\text{节点出口}}\right]$$
 
 {% details 点击此处查看更精确的推导。 %}
 
 更精确地说，我们实际上是在网络的每一层都做一次环形归约，而这些归约大部分可以重叠，因此有：
 
-$$T_\text{AG or RS comms} = \text{bytes} \cdot max_\text{depth i}\left[\frac{D_i - 1}{D_i \cdot W_\text{link i}}\right]$$
+$$T_\text{AG 或 RS 通信} = \text{字节} \cdot max_\text{深度 i}\left[\frac{D_i - 1}{D_i \cdot W_\text{链路 i}}\right]$$
 
-其中 $D_i$ 是深度 $i$ 处的度（即深度 $i$ 处的子节点数），$W_\text{link i}$ 是连接每个子节点到节点 $i$ 的链路带宽。
+其中 $D_i$ 是深度 $i$ 处的度（即深度 $i$ 处的子节点数），$W_\text{链路 i}$ 是连接每个子节点到节点 $i$ 的链路带宽。
 
-据此，对于给定拓扑，我们可以把可用的 AllGather/AllReduce 带宽计算为 $min_\text{depth i}(D_i * W_\text{link i} / (D_i - 1))$。在上面的例子中：
+据此，对于给定拓扑，我们可以把可用的 AllGather/AllReduce 带宽计算为 $min_\text{深度 i}(D_i * W_\text{链路 i} / (D_i - 1))$。在上面的例子中：
 
 * **节点（Node）：** $D_\text{node}$ = 8，因为一个节点中有 8 个 GPU，Wlink i = 450GB/s。因此 AG 带宽为 `450e9 * 8 / (8 - 1) = 514GB/s`。
 * **Leaf：** $D_\text{leaf}$ = 32，因为一个 SU 中有 32 个节点，Wlink i = 400GB/s（8 条 400Gbps IB 链路）。因此带宽为 `400e9 * 32 / (32 - 1) = 413GB/s`。
-* **Spine：** $D_\text{spine}$ = 4，因为有 4 个 SU，$W_\text{link i}$ = 12.8TB/s（来自上文的 `8 * 16 * 2 * 400Gbps` 条链路）。带宽为 `12.8e12 * 4 / (4 - 1) = 17.1TB/s`。
+* **Spine：** $D_\text{spine}$ = 4，因为有 4 个 SU，$W_\text{链路 i}$ = 12.8TB/s（来自上文的 `8 * 16 * 2 * 400Gbps` 条链路）。带宽为 `12.8e12 * 4 / (4 - 1) = 17.1TB/s`。
 
-因此总的 AG 或 RS 带宽为 `min(514GB/s, 413GB/s, 17.1TB/s) = 413GB/s`，瓶颈在 leaf 层，所以实践中 $T_\text{AG or RS comms} = B / \text{413GB/s}$，也就是说，即使在最高层，我们也有约 413GB/s 的 AllReduce 带宽。对于使用 SHARP 的 AllReduce，带宽会比这略低（约 400GB/s），因为没有 $(N - 1) / N$ 因子。不过，450GB/s 和 400GB/s 已经足够接近，可以用作近似值。
+因此总的 AG 或 RS 带宽为 `min(514GB/s, 413GB/s, 17.1TB/s) = 413GB/s`，瓶颈在 leaf 层，所以实践中 $T_\text{AG 或 RS 通信} = B / \text{413GB/s}$，也就是说，即使在最高层，我们也有约 413GB/s 的 AllReduce 带宽。对于使用 SHARP 的 AllReduce，带宽会比这略低（约 400GB/s），因为没有 $(N - 1) / N$ 因子。不过，450GB/s 和 400GB/s 已经足够接近，可以用作近似值。
 
 {% enddetails %}
 
 **其他集合通信：** 除非启用 SHARP，否则 AllReduce 的开销仍是上面的 2 倍。NVIDIA 也销售支持 SHARP 的 IB 交换机，但并非所有云服务商都配备。AllToAll 在跨节点时变化很大，因为它们不像 AllReduce 那样是“分层的”。如果我们想把数据从每个 GPU 发送到其他每个 GPU，就无法利用节点级的完整对分带宽。这意味着，如果一个 N 路 AllToAll 跨越 $M = N / 8$ 个节点，开销为
 
-$$T_\text{AllToAll comms} = \frac{B \cdot (M - 1)}{M^2 \cdot W_\text{node egress}} \approx \frac{B}{M \cdot W_\text{node egress}}$$
+$$T_\text{AllToAll 通信} = \frac{B \cdot (M - 1)}{M^2 \cdot W_\text{节点出口}} \approx \frac{B}{M \cdot W_\text{节点出口}}$$
 
 其有效带宽实际只有 50GB/s 而不是 400GB/s。我们从单个 H100 节点内的 $B / (8 * \text{450e9})$ 变成跨越 2 个节点时的 $B / (2 \cdot \text{400e9})$，性能下降超过 4 倍。
 
@@ -521,27 +521,27 @@ $$T_\text{AllToAll comms} = \frac{B \cdot (M - 1)}{M^2 \cdot W_\text{node egress
 | Leaf（SU） |      256       |         32          |                 25.6                 |                12.8                 |             400             |
 |   Spine   |      1024      |          4          |                 51.2                 |                51.2                 |             400             |
 
-我们用“集合通信带宽”（Collective Bandwidth）这一术语来描述 GPU 或节点能够发出数据的有效带宽。它也等于 $\text{bisection bandwidth} * 2 / N$。
+我们用“集合通信带宽”（Collective Bandwidth）这一术语来描述 GPU 或节点能够发出数据的有效带宽。它也等于 $\text{对分带宽} * 2 / N$。
 
-<p markdown=1 class="takeaway">**要点：** 超出节点层级后，对 B 字节做 AllGather 或 ReduceScatter 的开销大致为 $B / W_\text{node egress}$，在 H100 DGX SuperPod 上为 $B / \text{400e9}$；除非启用 SHARP，否则 AllReduce 的开销是其两倍。整体拓扑是胖树，旨在为任意两个节点之间提供恒定的带宽。</p>
+<p markdown=1 class="takeaway">**要点：** 超出节点层级后，对 B 字节做 AllGather 或 ReduceScatter 的开销大致为 $B / W_\text{节点出口}$，在 H100 DGX SuperPod 上为 $B / \text{400e9}$；除非启用 SHARP，否则 AllReduce 的开销是其两倍。整体拓扑是胖树，旨在为任意两个节点之间提供恒定的带宽。</p>
 
 **数组沿另一个轴分片时的归约：** 考虑如下归约的开销
 
 $$\text{AllReduce}_X(A[I_Y, J]\ \{ U_X \})$$
 
-其中我们要 AllReduce 的数组本身沿另一个轴 $Y$ 分片。在 TPU 上，与未分片版本相比，该操作的总开销降低为 $1 / Y$，因为每个轴发送的数据量只有原来的 $1 / Y$。在 GPU 上，开销取决于哪个轴是“内层”轴（节点内还是节点间），以及每个分片是否跨越多于一个节点。假设 $Y$ 是内层轴，数组总共有 $\text{bytes}$ 字节，则总开销实际上会降低 $Y$ 倍，但前提是 $Y$ 跨越多个节点：
+其中我们要 AllReduce 的数组本身沿另一个轴 $Y$ 分片。在 TPU 上，与未分片版本相比，该操作的总开销降低为 $1 / Y$，因为每个轴发送的数据量只有原来的 $1 / Y$。在 GPU 上，开销取决于哪个轴是“内层”轴（节点内还是节点间），以及每个分片是否跨越多于一个节点。假设 $Y$ 是内层轴，数组总共有 $\text{字节}$ 字节，则总开销实际上会降低 $Y$ 倍，但前提是 $Y$ 跨越多个节点：
 
-$$T_\text{comms at node} = \frac{\text{bytes}}{W_\text{GPU egress}} \cdot \frac{1}{\min(Y, D_\text{node})}$$
+$$T_\text{节点级通信} = \frac{\text{字节}}{W_\text{GPU 出口}} \cdot \frac{1}{\min(Y, D_\text{node})}$$
 
-$$T_\text{comms in scale-out network} = \frac{\text{bytes}}{W_\text{node egress}} \cdot \frac{D_\text{node}}{\max(D_\text{node}, Y)}$$
+$$T_\text{横向扩展网络中的通信} = \frac{\text{字节}}{W_\text{节点出口}} \cdot \frac{D_\text{node}}{\max(D_\text{node}, Y)}$$
 
-$$T_\text{total} = \max(T_\text{comms at node}, T_\text{comms in scale-out network})$$
+$$T_\text{total} = \max(T_\text{节点级通信}, T_\text{横向扩展网络中的通信})$$
 
 其中 N 是 GPU 数量，$D_\text{node}$ 同样是一个节点中的 GPU 数量（节点的度）。可以看到，如果 $Y < D_\text{node}$，我们在节点级获得了收益，但通常看不到总运行时间的减少；而如果 $Y > D_\text{node}$，我们获得的加速与跨越的节点数成正比。
 
 如果想精确描述环形归约，对于树形的 AllGather<sub>X</sub>(A<sub>Y</sub> { U<sub>X</sub> })（假设 Y 是内层轴），一般规则为
 
-$$T_\text{AR or RS comms} = \text{bytes} \cdot \max_{\text{depth } i}\left[\frac{D_i - 1}{D_i \cdot \max(Y, S_{i-1}) \cdot W_{\text{link } i}}\right]$$
+$$T_\text{AR 或 RS 通信} = \text{字节} \cdot \max_{\text{深度 } i}\left[\frac{D_i - 1}{D_i \cdot \max(Y, S_{i-1}) \cdot W_{\text{链路 } i}}\right]$$
 
 其中 $S_i$ 是 M * N * …，即树中第 i 层以下子节点的规模。这大致是说，我们跨越的 GPU 或节点越多，可用带宽就越大，但仅限于该节点内部。
 
@@ -629,7 +629,7 @@ $$T_\text{comms} = \frac{2 \cdot D \cdot F \cdot 256}{Y \cdot \text{12.8e12}} = 
 
 $$\text{MLP}(x) \equiv x[B, D] *_D W_\text{in}[D, F] \cdot_F W_\text{out}[F, D]$$
 
-其中 $B$ 是**以 token 计**的全局批大小（即 $B = \text{batch size} \cdot \text{sequence length}$）。
+其中 $B$ 是**以 token 计**的全局批大小（即 $B = \text{批大小} \cdot \text{序列长度}$）。
 
 这里我们重新列出上面那张展示 GPU 级和节点级有效带宽的表格：
 
@@ -722,11 +722,11 @@ $$T_\text{comms} = \frac{4 \cdot B \cdot D \cdot (Z-8)}{W \cdot Z} \cdot \min\le
 
 流水线并行把各层拆分到不同节点上，通信开销极低，因为我们只是每隔几层发送一次小规模微批次的激活值。历史上流水线一直受“流水线气泡”之苦，但借助新的零气泡（zero-bubble）流水线方法，通常可以避免气泡。
 
-流水线的总体通信开销非常小：若有 $N_\text{MB}$ 个微批次和 $N_\text{stages}$ 个阶段，则每跳开销为 $T_\text{comms per hop} = 2 \cdot B \cdot D / (W \cdot N_\text{MB})$，共有 $N_\text{MB} + N_\text{stages} - 2$ 跳，因此大致为
+流水线的总体通信开销非常小：若有 $N_\text{MB}$ 个微批次和 $N_\text{stages}$ 个阶段，则每跳开销为 $T_\text{每跳通信量} = 2 \cdot B \cdot D / (W \cdot N_\text{MB})$，共有 $N_\text{MB} + N_\text{stages} - 2$ 跳，因此大致为
 
-$$T_\text{total PP comms} = \frac{2BD}{W \cdot N_\text{MB}} \cdot (N_\text{MB} + N_\text{stages} - 2)$$
+$$T_\text{PP 总通信} = \frac{2BD}{W \cdot N_\text{MB}} \cdot (N_\text{MB} + N_\text{stages} - 2)$$
 
-$$T_\text{per-layer comms} \approx 1.5 \cdot \frac{2BD}{W \cdot N_\text{layers}}$$
+$$T_\text{每层通信} \approx 1.5 \cdot \frac{2BD}{W \cdot N_\text{layers}}$$
 
 由于要除以 $N_\text{layers}$，这比其他任何开销都小得多。换句话说，从通信角度看，流水线几乎是免费的。那我们为什么不直接用流水线呢？原因有以下几点：
 

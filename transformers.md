@@ -160,7 +160,7 @@ $$\frac{\partial L}{\partial A} = \frac{\partial L}{\partial C}\frac{\partial C}
 
 由于 **dL/dC** 是一个大小为 $$[N, M]$$ 的矩阵，这同样需要 $2NPM$ FLOPs。虽然这个量不是对某个参数的导数，但它被用来计算网络中前面各层的导数（例如，就像上面用 dL/dC 来计算 dL/dB 一样）。
 
-把这些加起来，我们看到**训练时总共需要 6NPM FLOPs**，而推理时只需要 2NPM：前向传播 2NPM，反向传播 4NPM。由于 PM 是该矩阵的参数量，这就是著名的训练时 Transformer FLOPs 近似公式 $$6 * \text{num parameters} * \text{num tokens}$$ 的最简单形式：每个 token 需要 $$6 * \text{num parameters}$$ FLOPs。我们会在下面给出更准确的推导。
+把这些加起来，我们看到**训练时总共需要 6NPM FLOPs**，而推理时只需要 2NPM：前向传播 2NPM，反向传播 4NPM。由于 PM 是该矩阵的参数量，这就是著名的训练时 Transformer FLOPs 近似公式 $$6 * \text{参数量} * \text{token 数}$$ 的最简单形式：每个 token 需要 $$6 * \text{参数量}$$ FLOPs。我们会在下面给出更准确的推导。
 
 ## Transformer 的计算账 {#transformer-accounting}
 
@@ -284,7 +284,7 @@ $$\frac{df}{dx} = \exp(g(x)) \cdot \frac{dg}{dx}$$
 
 所以为了避免重新计算，我们需要保存前向传播中的 $$g(x)$$ 和 $$\exp(g(x))$$。为了避免占用这么多内存，我们可以选择只保存一部分中间激活值。下面是我们使用的几种策略。
 
-* **块重计算（Block remat）**：只保存每层的输入。这是我们使用的最激进的方法，每层只保存 1 个检查点，这意味着在上面的例子中我们只需保存 4.2TB。这迫使我们在反向传播中重复几乎所有的前向传播 FLOPs，即 FLOPs 从 $$6 \cdot \text{num params} \cdot \text{num tokens}$$ 增加到大约 $$8 \cdot \text{num params} \cdot \text{num tokens}$$。
+* **块重计算（Block remat）**：只保存每层的输入。这是我们使用的最激进的方法，每层只保存 1 个检查点，这意味着在上面的例子中我们只需保存 4.2TB。这迫使我们在反向传播中重复几乎所有的前向传播 FLOPs，即 FLOPs 从 $$6 \cdot \text{参数量} \cdot \text{token 数}$$ 增加到大约 $$8 \cdot \text{参数量} \cdot \text{token 数}$$。
 * **只保存大矩阵乘法**：另一个简单的策略是只保存大矩阵乘法的输出。这让我们在反向传播中避免重新计算任何大矩阵乘法，但仍需要重新计算其他激活函数和注意力的部分内容。这把上面每层 20 个减少到接近每层 7 个。
 
 这些远不是全部。使用 JAX 时，这些通常由 `jax.remat`/`jax.checkpoint` 控制（你可以在[这里](https://jax.readthedocs.io/en/latest/_autosummary/jax.checkpoint.html)了解更多）。
@@ -310,7 +310,7 @@ $$\frac{df}{dx} = \exp(g(x)) \cdot \frac{dg}{dx}$$
 \textbf{MLP} & 3DF & 18BTDF \\[10pt]
 \textbf{Attention} & 4DNH & 24BTDNH + 12BT^2NH \\[10pt]
 \textbf{Other} & D & BTD \\[10pt]
-\textbf{Vocab} & DB \text{ (total, not per-layer)} & 12BTDV \\[10pt]
+\textbf{Vocab} & DB \text{（总计，非每层）} & 12BTDV \\[10pt]
 \end{array}
 $$ -->
 
@@ -366,7 +366,7 @@ $$U=\text{softmax}_S(\text{O[B, T, S, K, G]})$$
 
 $$\text{U[B, T, S, K, G]} \cdot \text{V[B, S, K, H]} \rightarrow \text{X[B, T, K, G, H]}$$
 
-因此总字节数为 $$2 * \text{sizeof}(Q) + 2 * \text{sizeof(K or V)} = 4BTNH + 4BSKH = 4BHK * (TG + S)$$，总 FLOPs 为 $$4BTSNH + O(BTSN)$$，算术强度为 $$4BTSKGH / (4BHK * (TG + S))$$。
+因此总字节数为 $$2 * \text{sizeof}(Q) + 2 * \text{sizeof(K 或 V)} = 4BTNH + 4BSKH = 4BHK * (TG + S)$$，总 FLOPs 为 $$4BTSNH + O(BTSN)$$，算术强度为 $$4BTSKGH / (4BHK * (TG + S))$$。
 
 所以基本上，在预填充阶段有 $$S=T$$，算术强度为 $$4BT^2KGH / 4BHKT \cdot (G+1) = TG/(G + 1) = O(T)$$。在生成阶段 $$T=1$$，于是有 $$4BSKGH / (4BHK \cdot (G + S)) = SG / (G + S) \rightarrow G$$（假设 $$S$$ 非常大）。取决于你如何理解这个问题，在不做序列分片的前提下，预填充或训练期间的自注意力在 S=240 时达到计算受限。在生成阶段，由于 $$G$$ 很小，我们永远不会是计算受限的。尽管如此，你可以看到增大 $$G$$ 会让我们更接近计算受限。
 
@@ -386,7 +386,7 @@ $$\text{U[B, T, S, K, G]} \cdot \text{V[B, S, K, H]} \rightarrow \text{X[B, T, K
 
 只保存七个矩阵乘法的输出（Q、K、V、O、W₁、W₂、W₃）意味着反向传播必须重新计算两个注意力矩阵乘法
 
-$$QK^{\top} \quad\text{and}\quad \operatorname{softmax}(QK^{\top})V$$
+$$QK^{\top} \quad\text{和}\quad \operatorname{softmax}(QK^{\top})V$$
 
 才能得到 $\frac{\partial L}{\partial W_\text{O}}$。
 
@@ -433,7 +433,7 @@ $$4 \; B \, T^{2} \, N \, H.$$
 
 1. **M：** $$q \cdot k$$ 沿序列维度的累积最大值
 2. **O：** 沿序列维度的累积完整注意力 softmax
-3. **L：** 累积分母 $$\sum_i \exp(q \cdot k_i - \text{running max})$$
+3. **L：** 累积分母 $$\sum_i \exp(q \cdot k_i - \text{运行最大值})$$
 
 有了这些，我们只需常数量级的内存就能计算新的最大值、新的累积和以及新的输出。粗略地描述一下其工作原理，注意力大致是这样的操作：
 
@@ -451,7 +451,7 @@ $$L^\text{combined} = \exp(M^1 - \max(M^1, M^2)) \cdot L^1 + \exp(M^2 - \max(M^1
 
 其中
 
-$$M^1 = \max_j Q \cdot K_j^1 \text{ and } M^2 = \max_j Q \cdot K_j^2$$
+$$M^1 = \max_j Q \cdot K_j^1 \text{ 和 } M^2 = \max_j Q \cdot K_j^2$$
 
 对完整的 softmax 也可以这样做，这样我们就能累加任意大的 softmax 和。下面是 Flash Attention 论文中的完整算法。
 

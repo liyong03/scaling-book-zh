@@ -94,7 +94,7 @@ _styles: >
 | $$d_\text{model}$$ (D)      |   8,192   |
 | $$d_{ff}$$ (F)              |  28,672   |
 | $$n_\text{heads}$$ (N)      |    64     |
-| $$n_\text{kv heads}$$ (K)   |     8     |
+| $$n_\text{KV 头数}$$ (K)   |     8     |
 | $$d_\text{qkv}$$ (H)        |    128    |
 | $$n_\text{embeddings}$$ (V) |  128,256  |
 
@@ -135,7 +135,7 @@ LLaMA 3-70B 有 8 个 KV 头，所以每个 token 的大小是 `2 * K * H * L = 
 我们可以借用上一节的公式：
 
 $$\begin{align*}
-\tiny \text{Theoretical Step Time (General)} = \underbrace{\frac{\text{Batch Size} \times \text{KV Cache Size}}{\tiny \text{Total Memory Bandwidth}}}_{\text{Attention (always bandwidth-bound)}} + \underbrace{\max\left(\frac{2 \times \text{Batch Size} \times \text{Parameter Count}}{\text{Total FLOPs/s}}, \frac{\text{Parameter Size}}{\text{Total Memory Bandwidth}}\right)}_{\tiny \text{MLP (can be compute-bound)}}
+\tiny \text{理论步时间（一般情况）} = \underbrace{\frac{\text{批大小} \times \text{KV 缓存大小}}{\tiny \text{总内存带宽}}}_{\text{注意力（始终带宽受限）}} + \underbrace{\max\left(\frac{2 \times \text{批大小} \times \text{参数量}}{\text{总 FLOPs/s}}, \frac{\text{参数大小}}{\text{总内存带宽}}\right)}_{\tiny \text{MLP（可能计算受限）}}
 \end{align*}$$
 
 这里我们的临界批大小约为 120，因为参数是 int8 而 FLOPs 是 bfloat16。我们也可以手动计算右侧的最大值，但这基本上是我们已经做过好几次的计算了。**所以无论是矩阵乘法还是 FLOPs，我们都深处内存受限区间。**
@@ -159,7 +159,7 @@ $$\begin{align*}
 正如第 7 部分所讨论的，对于任何满足 $B \ll D, F$ 的 bfloat16 矩阵乘法，我们有
 
 $$\begin{equation*}
-T_\text{math} > T_\text{comms} \leftrightarrow \frac{2BDF}{2DF} \geq \frac{\text{TPU bfloat16 FLOPs/s}}{\text{HBM bandwidth}} = 240
+T_\text{math} > T_\text{comms} \leftrightarrow \frac{2BDF}{2DF} \geq \frac{\text{TPU bfloat16 FLOPs/s}}{\text{HBM 带宽}} = 240
 \end{equation*}$$
 
 当权重是 int8 时，分母少了一个因子 2，于是得到 $2BDF / DF = 2B > 240$，也就是 $B > 120$，是之前临界批大小的一半。这对我们很有帮助！当权重和 FLOPs 都是 int8 时，我们必须使用 int8 对应的 TPU FLOPs/s，它从 bfloat16 的 1.97e14 变为 3.94e14，几乎翻倍。这意味着我们又回到了起点，大约 $B > 240$。
@@ -194,7 +194,7 @@ int8 权重加 bfloat16 FLOPs 的情形相当常见，因为无损地量化参�
 
 <p markdown=1 class="takeaway">**要点**：我们总可以通过计算“把模型的所有参数从 HBM 加载进 MXU 需要多久”来给出解码延迟的下界。当 KV 缓存很小时，可以把每一层看作只是逐块加载权重然后丢弃。除非我们使用很大的批大小或大量设备间通信，这通常是一个合理的界（误差在 1.5 倍以内）。当批大小更大时，我们还需要对 KV 缓存的加载建模，因为它会超过参数成为主导。</p>
 
-同样，在 FLOPs 受限区间（例如训练或大批量推理），我们可以使用 $$\text{Total FLOPs} / (N \cdot C) = 2 \cdot \text{param count} \cdot B / (N \cdot C)$$ 这个下界，它假设没有任何通信。
+同样，在 FLOPs 受限区间（例如训练或大批量推理），我们可以使用 $$\text{总 FLOPs} / (N \cdot C) = 2 \cdot \text{参数量} \cdot B / (N \cdot C)$$ 这个下界，它假设没有任何通信。
 
 **问题：** 对于上面每种情况，每芯片的吞吐量（以“查询数 / 芯片”计）是多少？*可以假设解码长度的中位数是 512 个 token。*
 
@@ -202,7 +202,7 @@ int8 权重加 bfloat16 FLOPs 的情形相当常见，因为无损地量化参�
 
 这是一个重要的问题，因为它与每 token 成本严格对应。
 
-在关于解码长度中位数的假设下，吞吐量就是 $$B / (\text{per-step latency} \cdot \text{median steps} \cdot N) \approx 43 / (0.019 * 512 * N)$$。这大约给出 $$(4.42 / N)$$ QPS，代入 $$N$$ 得到：
+在关于解码长度中位数的假设下，吞吐量就是 $$B / (\text{每步延迟} \cdot \text{中位步数} \cdot N) \approx 43 / (0.019 * 512 * N)$$。这大约给出 $$(4.42 / N)$$ QPS，代入 $$N$$ 得到：
 
 |  dtype   | QPS / 芯片 |
 | :------: | :--------: |
@@ -242,11 +242,11 @@ $$Y > \frac{F \cdot M_Y}{2200}$$
 
 **要点：我们实际上无法在 4x8 上用纯模型并行来部署。** 这里我们最多能用 4x2，*或许*能用 4x4。
 
-不过，正如我们讨论过的，当批大小较小时，我们通常可以做更多的模型并行而不会明显损害吞吐量，因为此时模型受内存带宽限制而不是 FLOPs 限制。我们之前说过这个值大约是 $Y=F / (8\cdot B)$，所以如果批大小为 64，理论上我们可以把模型并行度提高到 `Y = 28,672 / (8 * 64) = 56` 路，才会变成 ICI 受限。为了验证这一点，我们可以看单个矩阵乘法的 $T_\text{ici comms}$、$T_\text{hbm comms}$ 和 $T_\text{math}$。显然有：
+不过，正如我们讨论过的，当批大小较小时，我们通常可以做更多的模型并行而不会明显损害吞吐量，因为此时模型受内存带宽限制而不是 FLOPs 限制。我们之前说过这个值大约是 $Y=F / (8\cdot B)$，所以如果批大小为 64，理论上我们可以把模型并行度提高到 `Y = 28,672 / (8 * 64) = 56` 路，才会变成 ICI 受限。为了验证这一点，我们可以看单个矩阵乘法的 $T_\text{ICI 通信}$、$T_\text{HBM 通信}$ 和 $T_\text{math}$。显然有：
 
-$$\begin{align*}T_\text{ici comms} = \frac{2BD}{W_\text{ici}} && T_\text{hbm comms} = \frac{2DF}{Y \cdot W_\text{hbm}} && T_\text{math} = \frac{2BDF}{Y \cdot C}\end{align*}$$
+$$\begin{align*}T_\text{ICI 通信} = \frac{2BD}{W_\text{ici}} && T_\text{HBM 通信} = \frac{2DF}{Y \cdot W_\text{hbm}} && T_\text{math} = \frac{2BDF}{Y \cdot C}\end{align*}$$
 
-对于 `4x8`，可以得到 $T_\text{ici comms}$ = `(2 * 64 * 8192) / 9e10 = 11us`，$T_\text{hbm comms}$ = `(2 * 8192 * 28,672) / (32 * 8.2e11) = 18us`，以及 $T_\text{math}$ = `(2 * 64 * 8192 * 28,672) / (32 * 1.97e14) = 4us`，所以理论上我们仍然受 HBM 带宽限制，这很好！*注意，从 `4x4` 扩展到 `4x8` 从吞吐量的角度来看可能没什么帮助，但它会降低延迟！*
+对于 `4x8`，可以得到 $T_\text{ICI 通信}$ = `(2 * 64 * 8192) / 9e10 = 11us`，$T_\text{HBM 通信}$ = `(2 * 8192 * 28,672) / (32 * 8.2e11) = 18us`，以及 $T_\text{math}$ = `(2 * 64 * 8192 * 28,672) / (32 * 1.97e14) = 4us`，所以理论上我们仍然受 HBM 带宽限制，这很好！*注意，从 `4x4` 扩展到 `4x8` 从吞吐量的角度来看可能没什么帮助，但它会降低延迟！*
 
 如果看 int8 和 int4 的配置，我们*确实*可以用纯模型并行来实现。所以我们到了这样一个点：量化真正带来了 FLOPs 更快之外的实质性优势——它让我们在变成通信受限之前可以使用更大的批大小。**所以这个故事的结论是：我们无法在 4x8 上达到峰值吞吐量，但对于 int8 和 int4 配置，我们可以使用纯模型并行。**
 
@@ -313,11 +313,11 @@ $$\begin{align*}T_\text{ici comms} = \frac{2BD}{W_\text{ici}} && T_\text{hbm com
 ```py
 import numpy as np
 
-num_chips = 16  # we fix 16 as the amount of total model parallelism we do
-bytes_per_param = 1  # int8 means 1 byte per param
+num_chips = 16  # 我们把总的模型并行度固定为 16
+bytes_per_param = 1  # int8 意味着每个参数占 1 字节
 param_count = 70e9
 param_size = bytes_per_param * param_count
-sequence_length = 8192  # can vary this
+sequence_length = 8192  # 可以调整这个值
 
 hbm_bandwidth = 8.20E+11  # v5e
 flops = 1.97E+14  # v5e
@@ -343,7 +343,7 @@ max_idx = get_max_batch_size(
     num_chips=num_chips,
     sequence_length=sequence_length,
     param_size=param_size,
-)  # get the largest batch size that can fit
+)  # 求出能放得下的最大批大小
 batch_sizes = np.arange(1, 512, 1)[:max_idx]
 kv_sizes = kv_cache_size(sequence_length * batch_sizes)
 
@@ -352,10 +352,10 @@ kv_comms_time = kv_sizes / (num_chips * hbm_bandwidth)
 param_comms_time = param_size / (num_chips * hbm_bandwidth)
 param_comms_time = np.asarray([param_comms_time] * batch_sizes.shape[0])
 
-flops_time = 2 * param_size * batch_sizes / (num_chips * flops)  # roughly true in a 2ND sense
+flops_time = 2 * param_size * batch_sizes / (num_chips * flops)  # 在 2ND 的意义上大致成立
 
 mlp_time = np.maximum(flops_time, param_comms_time)
-attn_time = kv_comms_time  # always bandwidth-bound for generate
+attn_time = kv_comms_time  # 生成阶段始终是带宽受限的
 
 latency = 1000 * (mlp_time + attn_time)
 throughput = batch_sizes / (latency * num_chips)

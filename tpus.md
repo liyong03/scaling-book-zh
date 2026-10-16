@@ -267,9 +267,9 @@ $$B > \frac{9.2 \times 10^{14}}{1.6 \times 10^{10}} \simeq 57{,}500$$
 
 {% details 点击此处查看答案。 %}
 
-**答案：** (1) 我们需要执行的运算次数为 $2 \cdot 4096 \cdot 16384 \cdot B = 1.3 \times 10^{8} \cdot B$。所以 $T_{\text{math}} = (1.3 \times 10^{8} \cdot B) / 3.94 \times 10^{14}$ 秒。我们需要从 HBM 向 VMEM 加载 $16384 \cdot 4096 + 4096 \cdot B$ 字节，并从 VMEM 向 HBM 写回 $16384 \cdot B$ 字节。这意味着 $T_{\text{comms}} = (6.7 \times 10^{7} + 2 \times 10^{4} \cdot B) / 8.2 \times 10^{11}$ 秒。假设通信与计算尽可能地重叠，整个乘法大约需要
+**答案：** (1) 我们需要执行的运算次数为 $2 \cdot 4096 \cdot 16384 \cdot B = 1.3 \times 10^{8} \cdot B$。所以 $T_{\text{计算}} = (1.3 \times 10^{8} \cdot B) / 3.94 \times 10^{14}$ 秒。我们需要从 HBM 向 VMEM 加载 $16384 \cdot 4096 + 4096 \cdot B$ 字节，并从 VMEM 向 HBM 写回 $16384 \cdot B$ 字节。这意味着 $T_{\text{通信}} = (6.7 \times 10^{7} + 2 \times 10^{4} \cdot B) / 8.2 \times 10^{11}$ 秒。假设通信与计算尽可能地重叠，整个乘法大约需要
 
-$$\max\{T_{\text{math}}, T_{\text{comms}}\} = \max\left\{\frac{1.3 \times 10^{8} \cdot B}{3.94 \times 10^{14}}, \frac{6.7 \times 10^{7} + 2 \times 10^{4} \cdot B}{8.2 \times 10^{11}}\right\}$$
+$$\max\{T_{\text{计算}}, T_{\text{通信}}\} = \max\left\{\frac{1.3 \times 10^{8} \cdot B}{3.94 \times 10^{14}}, \frac{6.7 \times 10^{7} + 2 \times 10^{4} \cdot B}{8.2 \times 10^{11}}\right\}$$
 
 当 $\frac{6.7 \times 10^{7} + 2 \times 10^{4} \cdot B}{8.2 \times 10^{11}} < \frac{1.3 \times 10^{8} \cdot B}{3.94 \times 10^{14}}$，或者等价地 $B > 267$ 时，我们是 FLOPs 受限的。这比我们在[第 1 部分](../roofline)中推导出的 240 略大，因为这里我们把 $D$ 和 $F$ 的全部影响都考虑进去了。
 

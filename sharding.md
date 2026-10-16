@@ -178,23 +178,23 @@ $A[I_X, J_Y]$ 表示逻辑轴 **I** 已沿网格轴 **X** 分区，并且维度 
 import jax
 import jax.numpy as jnp
 
-# Create our mesh! We're running on a TPU v2-8 4x2 slice with names 'X' and 'Y'.
-# The Auto axis type tells JAX to let the XLA compiler infer intermediate shardings.
+# 创建我们的 mesh！我们运行在一个 TPU v2-8 4x2 切片上，轴名为 'X' 和 'Y'。
+# Auto 轴类型告诉 JAX 让 XLA 编译器推断中间结果的分片。
 assert len(jax.devices()) == 8
 Auto = jax.sharding.AxisType.Auto
 mesh = jax.make_mesh(axis_sizes=(4, 2), axis_names=('X', 'Y'), axis_types=(Auto, Auto))
 
-# A little utility function to help define our sharding. A PartitionSpec is our
-# sharding (a mapping from axes to names).
+# 一个帮助定义分片的小工具函数。PartitionSpec 就是我们的
+# 分片方式（从轴到名称的映射）。
 def P(*args):
   return jax.NamedSharding(mesh, jax.sharding.PartitionSpec(*args))
 
-# We shard both A and B over the non-contracting dimension and A over the contracting dim.
+# 我们将 A 和 B 都沿非收缩维度分片，并将 A 沿收缩维度分片。
 A = jnp.zeros((8, 2048), dtype=jnp.bfloat16, device=P('X', 'Y'))
 B = jnp.zeros((2048, 8192), dtype=jnp.bfloat16, device=P(None, 'Y'))
 
-# We can perform a matmul on these sharded arrays! out_shardings tells us how we want
-# the output to be sharded. JAX/XLA handles the rest of the sharding for us.
+# 我们可以对这些分片数组执行 matmul！out_shardings 指定了我们希望
+# 输出如何分片。其余的分片工作由 JAX/XLA 替我们处理。
 y = jax.jit(lambda A, B: jnp.einsum('BD,DF->BF', A, B), out_shardings=P('X', 'Y'))(A, B)
 ```
 
@@ -334,7 +334,7 @@ $$A[I_X, J] \cdot B[J, K] \rightarrow C[I, K]$$
 
 {% include figure.liquid path="assets/img/all-gather.gif" caption="<b>图：</b>演示如何在 8 个 TPU 或 GPU 设备上执行 AllGather 的动画。每个设备一开始持有数组的 1 / 8，最终得到一份完整副本。" %}
 
-AllGather 既可以单向进行，也可以双向进行（上图展示的是双向）。如果单向进行，每个 TPU 沿环发送 $N - 1$ 跳，每跳的数据块大小为 $\text{bytes} / N$。如果双向进行，则需要 $\lfloor \frac{N}{2} \rfloor$ 跳，每跳大小为 $2 \cdot \text{bytes} / N$。
+AllGather 既可以单向进行，也可以双向进行（上图展示的是双向）。如果单向进行，每个 TPU 沿环发送 $N - 1$ 跳，每跳的数据块大小为 $\text{字节} / N$。如果双向进行，则需要 $\lfloor \frac{N}{2} \rfloor$ 跳，每跳大小为 $2 \cdot \text{字节} / N$。
 
 **这需要多长时间？** 我们以双向 AllGather 为例来计算它的耗时。设 $$V$$ 为数组的字节数，$X$ 为收缩维度上的分片数。那么由上图可知，每一跳在每个方向上发送 $V / \lvert X\rvert$ 字节，因此每一跳耗时
 
@@ -387,7 +387,7 @@ $$T_{total} = \max \left[ \frac{T_{min} \cdot \sum_{i} |X_i|}{2}, \frac{V}{W_\te
 1) TPU v5e 的 2 个轴每个都有 4.5e10 bytes/s 的单向 ICI 带宽。
 2) 对于 (a)，在 bfloat16 下我们有 $A[E_Y, F]$，因此每个设备持有一个形状为 bf16[512, 8192] 的数组，大小为 512 * 8192 * 2 = 8.4MB。整个数组的大小为 2048 * 8192 * 2 = 34MB。
 
-*对于第 (1) 问*，我们可以使用上面的公式。由于是在一个轴上执行 AllGather，我们有 $T_{\text{comms}} = \text{34e6} / \text{9e10} = \text{377us}$。为了确认我们不是延迟受限的：在大小为 4 的轴上最多只有 3 跳，所以延迟下限大约是 3us，远未接近。然而，TPU v5e 只有在某个轴的大小为 16 时才有环绕连接，所以这里*我们实际上无法做完全双向的 AllGather*。来自一端的数据需要 3 跳才能到达另一端，因此理论上耗时更接近 $T_{\text{comms}} = 3 * \text{8.4e6} / \text{4.5e10} = 560\mu s$。[**这是**](https://imgur.com/a/RkvpRGQ)来自[这个 Colab](https://colab.research.google.com/drive/15tDZMfNqm2vJjvSzw5VC9qtSwc5td-oV?usp=sharing) 的**一份实际性能分析结果（profile）**，显示耗时为 $680 \mu s$，这是合理的，因为我们很可能达不到 100% 的理论带宽！*对于第 (2) 问*，每个分片的大小为 `64 * 256 * 2 = 32kB. 32e3 / 4.5e10 = 0.7us`，所以我们是延迟受限的。由于有 3 跳，这大约需要 3 * 1us = 3us。[实际上更接近 8us。](https://imgur.com/a/HZLQmYs)
+*对于第 (1) 问*，我们可以使用上面的公式。由于是在一个轴上执行 AllGather，我们有 $T_{\text{通信}} = \text{34e6} / \text{9e10} = \text{377us}$。为了确认我们不是延迟受限的：在大小为 4 的轴上最多只有 3 跳，所以延迟下限大约是 3us，远未接近。然而，TPU v5e 只有在某个轴的大小为 16 时才有环绕连接，所以这里*我们实际上无法做完全双向的 AllGather*。来自一端的数据需要 3 跳才能到达另一端，因此理论上耗时更接近 $T_{\text{通信}} = 3 * \text{8.4e6} / \text{4.5e10} = 560\mu s$。[**这是**](https://imgur.com/a/RkvpRGQ)来自[这个 Colab](https://colab.research.google.com/drive/15tDZMfNqm2vJjvSzw5VC9qtSwc5td-oV?usp=sharing) 的**一份实际性能分析结果（profile）**，显示耗时为 $680 \mu s$，这是合理的，因为我们很可能达不到 100% 的理论带宽！*对于第 (2) 问*，每个分片的大小为 `64 * 256 * 2 = 32kB. 32e3 / 4.5e10 = 0.7us`，所以我们是延迟受限的。由于有 3 跳，这大约需要 3 * 1us = 3us。[实际上更接近 8us。](https://imgur.com/a/HZLQmYs)
 
 {% enddetails %}
 
@@ -437,9 +437,9 @@ $$\begin{align*}
 
 每一跳的通信时间就是每个分片的字节数 $V / Y$ 除以带宽 $W_\text{ici}$，与 AllGather 的情况相同，因此我们有
 
-$$T_{\text{comms per AllGather or ReduceScatter}} = \frac{V}{W_\text{ici}}$$
+$$T_{\text{每次 AllGather 或 ReduceScatter 的通信量}} = \frac{V}{W_\text{ici}}$$
 
-$$T_{\text{comms per AllReduce}} = 2 \cdot \frac{V}{W_\text{ici}}$$
+$$T_{\text{每次 AllReduce 的通信量}} = 2 \cdot \frac{V}{W_\text{ici}}$$
 
 其中 $$W_\text{ici}$$ 是双向带宽，前提是我们有一个完整的环可以用来做归约。
 
@@ -483,13 +483,13 @@ A[I_X, J] \cdot B[J, K] \rightarrow &\ C[I_X, K]
 
 $$\textbf{AllToAll}_{X, J} A[I_X, J] \rightarrow A[I, J_X]$$
 
-AllToAll 通常用于在分片计算中布局方案互不兼容的不同区域之间重新排列分片布局。在考虑分片的混合专家模型时，它会很自然地出现。*你可以把 AllToAll 理解为把一个下标从一个轴移到另一个轴*。由于 AllToAll 不需要把每个分片的全部数据复制到环上的所有设备，它实际上比 AllGather *更便宜*（只需其 ¼ 的开销）<d-footnote>对于大小为偶数的双向环，每个设备向右发送 $(N/2 + (N/2-1) + … + 1)$ 个数据块，向左发送 $((N/2-1) + … + 1)$ 个数据块，合计 $= 0.5 \cdot (N / 2) \cdot (N/2 + 1) + 0.5 \cdot (N / 2) \cdot (N/2 - 1) = N^2/4$。每个数据块（也就是分片的分片）的大小为 $\text{bytes} / N^2$，因此每个设备的开销为 $(\text{bytes} / N^2) \cdot N^2 / 4 = \text{bytes} / 4$。由于总带宽随设备数量线性增长，这一（每设备的）结果可以推广到所有设备上。</d-footnote>。
+AllToAll 通常用于在分片计算中布局方案互不兼容的不同区域之间重新排列分片布局。在考虑分片的混合专家模型时，它会很自然地出现。*你可以把 AllToAll 理解为把一个下标从一个轴移到另一个轴*。由于 AllToAll 不需要把每个分片的全部数据复制到环上的所有设备，它实际上比 AllGather *更便宜*（只需其 ¼ 的开销）<d-footnote>对于大小为偶数的双向环，每个设备向右发送 $(N/2 + (N/2-1) + … + 1)$ 个数据块，向左发送 $((N/2-1) + … + 1)$ 个数据块，合计 $= 0.5 \cdot (N / 2) \cdot (N/2 + 1) + 0.5 \cdot (N / 2) \cdot (N/2 - 1) = N^2/4$。每个数据块（也就是分片的分片）的大小为 $\text{字节} / N^2$，因此每个设备的开销为 $(\text{字节} / N^2) \cdot N^2 / 4 = \text{字节} / 4$。由于总带宽随设备数量线性增长，这一（每设备的）结果可以推广到所有设备上。</d-footnote>。
 
 {% include figure.liquid path="assets/img/all-to-all.gif" class="img-fluid" %}
 
 如果推广到 N 维 AllToAll，在 AxBxC 网格上，对于总字节数为 $V$（所有设备加总）的数组，总开销为
 
-$$T_\text{comms per AllToAll} = \frac{V \cdot \max(A, B, C, ...)}{4 \cdot N \cdot W_\text{ici}}$$
+$$T_\text{每次 AllToAll 的通信量} = \frac{V \cdot \max(A, B, C, ...)}{4 \cdot N \cdot W_\text{ici}}$$
 
 其中与往常一样，$W_\text{ici}$ 是双向 ICI 带宽，$N = A \cdot B \cdot C \cdot \ldots$ 是设备总数。等价地，用每个设备的字节数 $V / N$ 来表示，开销为 $(V / N) \cdot \max(A, B, C, ...) / (4 \cdot W_\text{ici})$。对于一维网格，它简化为 $V / (4 \cdot W_\text{ici})$，即 AllGather 开销的 1 / 4。在二维情况下，开销实际上会随最小轴的大小而按比例下降。
 
@@ -513,21 +513,21 @@ $$\textbf{ReduceScatter}_X A'[I] \{ U_X \} \rightarrow A'[I_X]$$
 
 $$
 \begin{align*}
-\text{broadcast} &: \mathbb{R}^n \rightarrow \mathbb{R}^{p n} \\
-\text{broadcast} &= u \otimes \mathbf{I}_n \\
-\text{reduce} &: \mathbb{R}^{p n} \rightarrow \mathbb{R}^n \\
-\text{reduce} &= u^T \otimes \mathbf{I}_n
+\text{广播} &: \mathbb{R}^n \rightarrow \mathbb{R}^{p n} \\
+\text{广播} &= u \otimes \mathbf{I}_n \\
+\text{归约} &: \mathbb{R}^{p n} \rightarrow \mathbb{R}^n \\
+\text{归约} &= u^T \otimes \mathbf{I}_n
 \end{align*}
 $$
 
-我们通过一个例子来看看它是什么样子，其中 $n = 1$，$p = 2$。如果 $x = (7)$，我们有 $$\text{broadcast}(x) = \left(\begin{pmatrix} 1 \\ 1 \end{pmatrix} \otimes \begin{pmatrix} 1 \end{pmatrix}\right) x = \begin{pmatrix} 1 \\ 1 \end{pmatrix} x = \begin{pmatrix}  7\\  7  \end{pmatrix} \in \mathbb{R}^{p n}$$。这与我们的预期一致：把 $\mathbb{R}^n$ 中的向量广播到 $\mathbb{R}^{pn}$。现在令 $y = (8, 9)$，我们有 $$\text{reduce}(y) = \left(\begin{pmatrix} 1 & 1 \end{pmatrix} \otimes \begin{pmatrix} 1\end{pmatrix}\right) y = \begin{pmatrix} 1 & 1  \end{pmatrix} \begin{pmatrix}  8 \\ 9  \end{pmatrix} = \begin{pmatrix}   17    \end{pmatrix}$$。这同样符合预期：把 $\mathbb{R}^{p n}$ 中的向量归约为 $\mathbb{R}^{n}$ 中的向量。由于对任意两个矩阵 $A$ 和 $B$ 都有 $(A \otimes B)^T = A^T \otimes B^T$，我们可以看出 $\text{reduce} = \text{broadcast}^T$。AllGather 和 ReduceScatter 则可以表示为如下外积：
+我们通过一个例子来看看它是什么样子，其中 $n = 1$，$p = 2$。如果 $x = (7)$，我们有 $$\text{广播}(x) = \left(\begin{pmatrix} 1 \\ 1 \end{pmatrix} \otimes \begin{pmatrix} 1 \end{pmatrix}\right) x = \begin{pmatrix} 1 \\ 1 \end{pmatrix} x = \begin{pmatrix}  7\\  7  \end{pmatrix} \in \mathbb{R}^{p n}$$。这与我们的预期一致：把 $\mathbb{R}^n$ 中的向量广播到 $\mathbb{R}^{pn}$。现在令 $y = (8, 9)$，我们有 $$\text{归约}(y) = \left(\begin{pmatrix} 1 & 1 \end{pmatrix} \otimes \begin{pmatrix} 1\end{pmatrix}\right) y = \begin{pmatrix} 1 & 1  \end{pmatrix} \begin{pmatrix}  8 \\ 9  \end{pmatrix} = \begin{pmatrix}   17    \end{pmatrix}$$。这同样符合预期：把 $\mathbb{R}^{p n}$ 中的向量归约为 $\mathbb{R}^{n}$ 中的向量。由于对任意两个矩阵 $A$ 和 $B$ 都有 $(A \otimes B)^T = A^T \otimes B^T$，我们可以看出 $\text{归约} = \text{广播}^T$。AllGather 和 ReduceScatter 则可以表示为如下外积：
 
 $$
 \begin{align*}
 \text{AllGather} &: \mathbb{R}^{p n} \rightarrow \mathbb{R}^{p^2 n} \\
-\text{AllGather} &= \text{broadcast} \otimes \mathbf{I}_p \\
+\text{AllGather} &= \text{广播} \otimes \mathbf{I}_p \\
 \text{ReduceScatter} &= \mathbb{R}^{p^2 n} \rightarrow \mathbb{R}^{p n} \\
-\text{ReduceScatter} &= \text{reduce} \otimes \mathbf{I}_p
+\text{ReduceScatter} &= \text{归约} \otimes \mathbf{I}_p
 \end{align*}
 $$
 
@@ -578,8 +578,8 @@ A[I, J_X] \cdot_{LOCAL} B[J_X, K] \rightarrow &\ C[I, K] \{ U_X \} \\
 
 * 这些操作各自的开销和延迟**与轴的大小无关（只要它们是带宽受限的）**，只取决于输入数组的大小和链路带宽。对于单向的 AllGather/ReduceScatter：
 
-$$T_{\text{comm per AllGather or ReduceScatter}} = \frac{\text{Data volume}}{\text{bandwidth}} \cdot \frac{\text{Axis} - 1}{\text{Axis}}
-\longrightarrow \frac{\text{Data volume}}{\text{bandwidth (bidirectional)}}$$
+$$T_{\text{每次 AllGather 或 ReduceScatter 的通信量}} = \frac{\text{数据量}}{\text{带宽}} \cdot \frac{\text{轴} - 1}{\text{轴}}
+\longrightarrow \frac{\text{数据量}}{\text{带宽（双向）}}$$
 
 * AllReduce 由一次 ReduceScatter 加一次 AllGather 组成，因此开销是上面的 2 倍。AllToAll 只需把分片沿环传递一部分路程，因此开销是 AllGather 的 ¼。总结如下：
 
@@ -632,7 +632,7 @@ $$T_{\text{comm per AllGather or ReduceScatter}} = \frac{\text{Data volume}}{\te
 
 先从基线（*策略 1*）开始。如前所示，AllGather 的开销为 $2DF / W_\text{ici}$。拿到完全复制的数组后，总计算时间为 $2BDF / C$（其中 $C$ 是加速器的 FLOPs/s，因为每个 TPU 执行的 FLOPs 相同）。于是有
 
-$$T_\text{total (Strategy 1)} = \max\left(\frac{2BDF}{C}, \frac{2DF}{W_\text{ici}}\right)$$
+$$T_\text{总计（策略 1）} = \max\left(\frac{2BDF}{C}, \frac{2DF}{W_\text{ici}}\right)$$
 
 相比之下，新策略（策略 2）对 $2BF$ 字节做 AllReduce，开销为 $4BF / W_\text{ici}$，但 FLOPs 只有原来的 $1 / X$（因为计算是分片的）。这意味着我们执行 $2\cdot B\cdot D\cdot F / X$ 次 FLOPs，而随后的 AllReduce 在 bfloat16 下通信 $$2 \cdot 2 \cdot B \cdot F$$ 字节。因此，*策略 2*（不做 AllGather，只在之后做一次 AllReduce）的总时间大约为
 
@@ -642,11 +642,11 @@ $$T_\text{total} = \max\left(\frac{2BDF}{X \cdot C}, \frac{4BF}{W_\text{ici}}\ri
 
 所以如果 $B < 2550$，两种情况下我们都是通信受限的，此时有
 
-$$T_\text{comms for Strategy 2} < T_\text{comms for Strategy 1} \Leftrightarrow \frac{4BF}{W_\text{ici}} < \frac{2DF}{W_\text{ici}}$$
+$$T_\text{策略 2 的通信} < T_\text{策略 1 的通信} \Leftrightarrow \frac{4BF}{W_\text{ici}} < \frac{2DF}{W_\text{ici}}$$
 
 当 $D > 2B$ 时上式成立，其中 $2B < 5100$。这通常成立，所以当批次较小时，策略 2 有时会更好。当批次较大（$B > 2550$）时，有
 
-$$T_\text{comms for Strategy 2} < T_\text{math for Strategy 1} \Leftrightarrow \frac{4BF}{W_\text{ici}} < \frac{2BDF}{C}$$
+$$T_\text{策略 2 的通信} < T_\text{策略 1 的计算} \Leftrightarrow \frac{4BF}{W_\text{ici}} < \frac{2BDF}{C}$$
 
 当 $2 / W_\text{ici} < D / C$，即 $D > 2 * 2550 = 5100$ 时上式成立，这对大模型通常成立。所以除非 $D$ 很小，否则这种替代策略对大模型通常更好。
 
@@ -724,11 +724,11 @@ $$T_\text{comms for Strategy 2} < T_\text{math for Strategy 1} \Leftrightarrow \
 
 **答案：** $$N^2 (1-\frac{1}{D})$$，当 $$D >> 1$$ 时就是 $$N^2$$。
 
-(2) **解答：** 从通信的角度看，AllToAll 与 AllGather 的关键区别在于：在 AllToAll 中，位于某个设备上的分片并不需要整个传送给其他每个设备。设想存储在某个设备（称之为设备 0）上的分片为 $$[A, B, C, D]$$（这里 A、B、C、D 是矩阵，为便于说明，我们设想一个有 4 个设备的环）。那么矩阵 $$A$$ 不需要传送到任何地方，矩阵 $$B$$ 最终需要到达设备 1；矩阵 $$C$$ 到达设备 2；矩阵 $$D$$ 到达设备 3。所以在算法的第一步，我们把 $$B$$、$$C$$ 和 $$D$$ 发送到设备 1；下一步，设备 1 把 $$C$$ 和 $$D$$ 继续发送到设备 2；最后一步，设备 2 只把 $$D$$ 发送到设备 3。这种情况下传输的参数总数为 $$(\text{size of A/B/C/D}) * (3 + 2 + 1)$$。（现在推广到一般情况）A/B/C/D 的大小为 $$\frac{N^2}{D^2}$$，同样在一般情况下 $$(3 + 2 + 1)$$ 这一项变为 $$((D-1) + (D-2) + … + 1)$$，即 $$\frac{(D)(D-1)}{2}$$。所以经过单条 ICI 链路传输的总字节数为 $$\frac{N^2(D-1)}{D \times 2}$$。
+(2) **解答：** 从通信的角度看，AllToAll 与 AllGather 的关键区别在于：在 AllToAll 中，位于某个设备上的分片并不需要整个传送给其他每个设备。设想存储在某个设备（称之为设备 0）上的分片为 $$[A, B, C, D]$$（这里 A、B、C、D 是矩阵，为便于说明，我们设想一个有 4 个设备的环）。那么矩阵 $$A$$ 不需要传送到任何地方，矩阵 $$B$$ 最终需要到达设备 1；矩阵 $$C$$ 到达设备 2；矩阵 $$D$$ 到达设备 3。所以在算法的第一步，我们把 $$B$$、$$C$$ 和 $$D$$ 发送到设备 1；下一步，设备 1 把 $$C$$ 和 $$D$$ 继续发送到设备 2；最后一步，设备 2 只把 $$D$$ 发送到设备 3。这种情况下传输的参数总数为 $$(\text{A/B/C/D 的大小}) * (3 + 2 + 1)$$。（现在推广到一般情况）A/B/C/D 的大小为 $$\frac{N^2}{D^2}$$，同样在一般情况下 $$(3 + 2 + 1)$$ 这一项变为 $$((D-1) + (D-2) + … + 1)$$，即 $$\frac{(D)(D-1)}{2}$$。所以经过单条 ICI 链路传输的总字节数为 $$\frac{N^2(D-1)}{D \times 2}$$。
 
 **答案：** $$\frac{N^2}{2}(1-\frac{1}{D})$$，当 $$D >> 1$$ 时就是 $$\frac{N^2}{2}$$。
 
-(3) **解答：** 这个因子就是 $$\frac{1}{2}$$，即在单向环形拓扑上，AllToAll 的开销是 all-gather/ReduceScatter 的一半。回顾上面的推导，这最终来自这样一个事实：在 all-gather 的情况下，我们把同样大小的块各传输 $$(D-1)$$ 次，即我们在计算求和 $$ \text{tiny block size} * (D + D + D + … + D)$$；而在 AllToAll 的情况下，我们计算的是求和 $$\text{tiny block size} * (D + D-1 + D-2 + … + 1)$$。因此这个 2 倍的因子本质上来自 $$1 + 2 + \ldots + n = n(n+1)/2$$ 这一事实。
+(3) **解答：** 这个因子就是 $$\frac{1}{2}$$，即在单向环形拓扑上，AllToAll 的开销是 all-gather/ReduceScatter 的一半。回顾上面的推导，这最终来自这样一个事实：在 all-gather 的情况下，我们把同样大小的块各传输 $$(D-1)$$ 次，即我们在计算求和 $$ \text{极小块大小} * (D + D + D + … + D)$$；而在 AllToAll 的情况下，我们计算的是求和 $$\text{极小块大小} * (D + D-1 + D-2 + … + 1)$$。因此这个 2 倍的因子本质上来自 $$1 + 2 + \ldots + n = n(n+1)/2$$ 这一事实。
 
 (4) **解答**：任意一条链路需要承载的标量总数现在减少为原来的一半，因为在双向环上，每个“分片条带”可以同时向两个方向发送。
 

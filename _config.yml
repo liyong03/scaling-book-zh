@@ -10,8 +10,7 @@ contact_note: >
   Unofficial Simplified Chinese translation of How To Scale Your Model (https://jax-ml.github.io/scaling-book/). For questions about the original, contact jacobaustin123 [at] gmail [dot] com.
 description: > # the ">" symbol means to ignore newlines until "footer_text:"
 footer_text: >
-  非官方中文译本，原著 <a href="https://jax-ml.github.io/scaling-book/">How To Scale Your Model</a> © Google LLC，MIT 许可证。Powered by <a href="https://jekyllrb.com/" target="_blank">Jekyll</a> with <a href="https://github.com/alshedivat/al-folio">al-folio</a> theme.
-  Hosted by <a href="https://pages.github.com/" target="_blank">GitHub Pages</a>.
+  非官方中文译本，原著 <a href="https://jax-ml.github.io/scaling-book/">How To Scale Your Model</a> © Google LLC，MIT 许可证。基于 <a href="https://jekyllrb.com/" target="_blank">Jekyll</a> 与 <a href="https://github.com/alshedivat/al-folio">al-folio</a> 主题构建，托管于 <a href="https://pages.github.com/" target="_blank">GitHub Pages</a>。
 keywords: scaling, jax, llms, transformers, tpus, google, deepmind, parallelism, pallas  # add your own keywords or leave empty
 lang: zh-CN # the language of your site (for example: en, fr, cn, ru, etc.)
 icon: favicon.ico # the emoji used as the favicon (alternatively, provide image name in /assets/img/)
