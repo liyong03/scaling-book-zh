@@ -1,0 +1,195 @@
+<!DOCTYPE html> <html> <head> <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"> <meta charset="utf-8"> <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no"> <meta http-equiv="X-UA-Compatible" content="IE=edge"> <title> 在 TPU 上训练 LLaMA 3 | 如何扩展你的模型 </title> <meta name="author" content=" "> <meta name="description" content="让我们仔细看看，如何利用上一节学到的内容在 TPU v5p 上训练 LLaMA 3 模型。它们有多大？不同配置下训练的开销有多大？它们是如何分片的？我们来做一些粗略估算，看看前几节的内容如何对应到真实的模型上。"> <meta name="keywords" content="scaling, jax, llms, transformers, tpus, google, deepmind, parallelism, pallas"> <meta property="og:site_name" content="如何扩展你的模型"> <meta property="og:type" content="website"> <meta property="og:title" content="在 TPU 上训练 LLaMA 3"> <meta property="og:url" content="https://liyong03.github.io/scaling-book-zh/applied-training/"> <meta property="og:description" content="让我们仔细看看，如何利用上一节学到的内容在 TPU v5p 上训练 LLaMA 3 模型。它们有多大？不同配置下训练的开销有多大？它们是如何分片的？我们来做一些粗略估算，看看前几节的内容如何对应到真实的模型上。"> <meta property="og:image" content="https://liyong03.github.io/scaling-book-zh/assets/img/dragon.png"> <meta property="og:locale" content="zh-CN"> <meta name="twitter:card" content="summary_large_image"> <meta name="twitter:title" content="在 TPU 上训练 LLaMA 3"> <meta name="twitter:description" content="让我们仔细看看，如何利用上一节学到的内容在 TPU v5p 上训练 LLaMA 3 模型。它们有多大？不同配置下训练的开销有多大？它们是如何分片的？我们来做一些粗略估算，看看前几节的内容如何对应到真实的模型上。"> <meta name="twitter:image" content="https://liyong03.github.io/scaling-book-zh/assets/img/dragon.png"> <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "url": "https://liyong03.github.io/scaling-book-zh/applied-training/",
+        "name": "如何扩展你的模型",
+        "headline": "在 TPU 上训练 LLaMA 3",
+        
+        "description": "让我们仔细看看，如何利用上一节学到的内容在 TPU v5p 上训练 LLaMA 3 模型。它们有多大？不同配置下训练的开销有多大？它们是如何分片的？我们来做一些粗略估算，看看前几节的内容如何对应到真实的模型上。"
+    }
+  </script> <link rel="stylesheet" href="/scaling-book-zh/assets/css/bootstrap.min.css?a4b3f509e79c54a512b890d73235ef04"> <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/mdbootstrap@4.20.0/css/mdb.min.css" integrity="sha256-jpjYvU3G3N6nrrBwXJoVEYI/0zw8htfFnhT9ljN3JJw=" crossorigin="anonymous"> <link rel="preload" as="font" type="font/woff2" crossorigin href="/scaling-book-zh/assets/fonts/roboto/roboto-latin.woff2"> <link defer rel="stylesheet" href="/scaling-book-zh/assets/css/academicons.min.css?f0b7046b84e425c55f3463ac249818f5"> <link defer rel="stylesheet" href="/scaling-book-zh/assets/css/scholar-icons.css?62b2ac103a88034e6882a5be5f3e2772"> <link defer rel="stylesheet" href="/scaling-book-zh/assets/css/jekyll-pygments-themes-vs.css?4ee1a2facd1a8a76347f4bd43a740500" media="" id="highlight_theme_light"> <link rel="icon" href="/scaling-book-zh/assets/img/favicon.ico?40fa984da00a7d776e79162fb29402f2" sizes="48x48"> <link rel="icon" type="image/png" href="/scaling-book-zh/assets/img/favicon-96x96.png?6fad83cd890cb60f9e27143afa90eefd" sizes="96x96"> <link rel="icon" type="image/png" href="/scaling-book-zh/assets/img/favicon-192x192.png?3fdfb758795130ba54a94ab468f6e7ec" sizes="192x192"> <link rel="apple-touch-icon" href="/scaling-book-zh/assets/img/apple-touch-icon.png?0e2a9fab4bca21b912aa5871abd33c2a"> <link rel="stylesheet" href="/scaling-book-zh/assets/css/main.css?d41d8cd98f00b204e9800998ecf8427e"> <link rel="canonical" href="https://liyong03.github.io/scaling-book-zh/applied-training/"> <script src="/scaling-book-zh/assets/js/theme.js?9a0c749ec5240d9cda97bc72359a72c0"></script> <link defer rel="stylesheet" href="/scaling-book-zh/assets/css/jekyll-pygments-themes-native.css?5847e5ed4a4568527aa6cfab446049ca" media="none" id="highlight_theme_dark"> <script>
+    initTheme();
+  </script> <script>
+  try {
+    if (localStorage.getItem("tufte-sidenotes-enabled") === "1") {
+      document.documentElement.classList.add("tufte-mode");
+    }
+  } catch (e) {}
+</script> <script src="/scaling-book-zh/assets/js/distillpub/template.v2.js"></script> <script src="/scaling-book-zh/assets/js/distillpub/transforms.v2.js"></script> <style type="text/css">.fake-img{background:#bbb;border:1px solid rgba(0,0,0,0.1);box-shadow:0 0 4px rgba(0,0,0,0.1);margin-bottom:12px}.fake-img p{font-family:monospace;color:white;text-align:left;margin:12px 0;text-align:center;font-size:16px}</style> </head> <body> <d-front-matter> <script async type="text/json">
+      {
+            "title": "在 TPU 上训练 LLaMA 3",
+            "description": "让我们仔细看看，如何利用上一节学到的内容在 TPU v5p 上训练 LLaMA 3 模型。它们有多大？不同配置下训练的开销有多大？它们是如何分片的？我们来做一些粗略估算，看看前几节的内容如何对应到真实的模型上。",
+            "published": "February 04, 2025",
+            "authors": [
+              
+              {
+                "author": "Jacob Austin",
+                "authorURL": "https://www.jacobaustin.org/",
+                "affiliations": [
+                  {
+                    "name": "Google DeepMind",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Sholto Douglas",
+                "authorURL": "https://x.com/_sholtodouglas",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Roy Frostig",
+                "authorURL": "https://cs.stanford.edu/~rfrostig/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Anselm Levskaya",
+                "authorURL": "https://anselmlevskaya.com/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Charlie Chen",
+                "authorURL": "https://x.com/charliexychen",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Sharad Vikram",
+                "authorURL": "https://sharadvikram.com/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Federico Lebron",
+                "authorURL": "https://fedelebron.com/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Peter Choy",
+                "authorURL": "https://x.com/pchoy95",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Vinay Ramasesh",
+                "authorURL": "https://x.com/vinayramasesh",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Albert Webson",
+                "authorURL": "https://representation.ai/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Reiner Pope<sup>*</sup>",
+                "authorURL": "https://x.com/reinerpope",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              }
+              
+            ],
+            "katex": {
+              "delimiters": [
+                {
+                  "left": "$",
+                  "right": "$",
+                  "display": false
+                },
+                {
+                  "left": "$$",
+                  "right": "$$",
+                  "display": true
+                }
+              ]
+            }
+          }
+    </script> </d-front-matter> <header> <script>
+    function goToTop() {
+      document.body.scrollTop = 0; // For Safari
+      document.documentElement.scrollTop = 0; // For Chrome, Firefox, IE and Opera
+    }
+
+    // When the user scrolls down 20px from the top of the document, show the button
+    window.onscroll = function() {scrollFunction()};
+
+    function scrollFunction() {
+      // Get the button:
+      let mybutton = document.getElementById("top-button");
+      if (!mybutton) return;
+
+      if (document.body.scrollTop > 40 || document.documentElement.scrollTop > 40) {
+        mybutton.style.display = "block";
+      } else {
+        mybutton.style.display = "none";
+      }
+  }
+  </script> <nav id="navbar" class="navbar navbar-light navbar-expand-sm fixed-top" role="navigation"> <div class="container"> <a class="navbar-brand title font-weight-lighter" href="/scaling-book-zh"> 如何扩展你的模型 </a> <button class="navbar-toggler collapsed ml-auto" type="button" data-toggle="collapse" data-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="切换导航"> <span class="sr-only">切换导航</span> <span class="icon-bar top-bar"></span> <span class="icon-bar middle-bar"></span> <span class="icon-bar bottom-bar"></span> </button> <div class="left-button section-button"><a href="../training"><svg viewbox="-78.5 0 512 512"><path d="M257 64L291 98 128 262 291 426 257 460 61 262 257 64Z"></path></svg></a></div> <div class="right-button section-button"><a href="../inference"><svg viewbox="-78.5 0 512 512"><path d="M98 460L64 426 227 262 64 98 98 64 294 262 98 460Z"></path></svg></a></div> <div class="collapse navbar-collapse text-right" id="navbarNav"> <ul class="navbar-nav ml-auto flex-nowrap"> <li class="nav-item "> <a class="nav-link" href="/scaling-book-zh/"> </a> </li> <li class="nav-item nav-hidden"><a class="nav-link" href="../training">上一部分</a></li> <li class="nav-item nav-hidden"><a class="nav-link" href="../inference">下一部分</a></li> <li class="nav-item dropdown "> <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false"> <i class="ti ti-list dropdown-icon"></i> <span class="dropdown-text">章节</span> </a> <div class="dropdown-menu dropdown-menu-right" aria-labelledby="navbarDropdown"> <a class="dropdown-item " href="/scaling-book-zh/index">第 0 部分：引言</a> <a class="dropdown-item " href="/scaling-book-zh/roofline">第 1 部分：Roofline 模型</a> <a class="dropdown-item " href="/scaling-book-zh/tpus">第 2 部分：TPU</a> <a class="dropdown-item " href="/scaling-book-zh/sharding">第 3 部分：分片</a> <a class="dropdown-item " href="/scaling-book-zh/transformers">第 4 部分：Transformer 数学</a> <a class="dropdown-item " href="/scaling-book-zh/training">第 5 部分：训练</a> <a class="dropdown-item " href="/scaling-book-zh/applied-training">第 6 部分：训练 LLaMA</a> <a class="dropdown-item " href="/scaling-book-zh/inference">第 7 部分：推理</a> <a class="dropdown-item " href="/scaling-book-zh/applied-inference">第 8 部分：部署 LLaMA</a> <a class="dropdown-item " href="/scaling-book-zh/profiling">第 9 部分：性能分析</a> <a class="dropdown-item " href="/scaling-book-zh/jax-stuff">第 10 部分：JAX</a> <a class="dropdown-item " href="/scaling-book-zh/conclusion">第 11 部分：结论</a> <a class="dropdown-item " href="/scaling-book-zh/gpus">第 12 部分：GPU</a> </div> </li> <li class="toggle-container"> <button id="light-toggle" title="切换主题"> <svg id="light-toggle-system" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.173 14.83a4 4 0 1 1 5.657 -5.657"></path><path d="M11.294 12.707l.174 .247a7.5 7.5 0 0 0 8.845 2.492a9 9 0 0 1 -14.671 2.914"></path><path d="M3 12h1"></path><path d="M12 3v1"></path><path d="M5.6 5.6l.7 .7"></path><path d="M3 21l18 -18"></path></svg> <svg id="light-toggle-dark" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewbox="0 0 24 24" fill="currentColor"><path d="M12 1.992a10 10 0 1 0 9.236 13.838c.341 -.82 -.476 -1.644 -1.298 -1.31a6.5 6.5 0 0 1 -6.864 -10.787l.077 -.08c.551 -.63 .113 -1.653 -.758 -1.653h-.266l-.068 -.006l-.06 -.002z"></path></svg> <svg id="light-toggle-light" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewbox="0 0 24 24" fill="currentColor"><path d="M12 19a1 1 0 0 1 .993 .883l.007 .117v1a1 1 0 0 1 -1.993 .117l-.007 -.117v-1a1 1 0 0 1 1 -1z"></path><path d="M18.313 16.91l.094 .083l.7 .7a1 1 0 0 1 -1.32 1.497l-.094 -.083l-.7 -.7a1 1 0 0 1 1.218 -1.567l.102 .07z"></path><path d="M7.007 16.993a1 1 0 0 1 .083 1.32l-.083 .094l-.7 .7a1 1 0 0 1 -1.497 -1.32l.083 -.094l.7 -.7a1 1 0 0 1 1.414 0z"></path><path d="M4 11a1 1 0 0 1 .117 1.993l-.117 .007h-1a1 1 0 0 1 -.117 -1.993l.117 -.007h1z"></path><path d="M21 11a1 1 0 0 1 .117 1.993l-.117 .007h-1a1 1 0 0 1 -.117 -1.993l.117 -.007h1z"></path><path d="M6.213 4.81l.094 .083l.7 .7a1 1 0 0 1 -1.32 1.497l-.094 -.083l-.7 -.7a1 1 0 0 1 1.217 -1.567l.102 .07z"></path><path d="M19.107 4.893a1 1 0 0 1 .083 1.32l-.083 .094l-.7 .7a1 1 0 0 1 -1.497 -1.32l.083 -.094l.7 -.7a1 1 0 0 1 1.414 0z"></path><path d="M12 2a1 1 0 0 1 .993 .883l.007 .117v1a1 1 0 0 1 -1.993 .117l-.007 -.117v-1a1 1 0 0 1 1 -1z"></path><path d="M12 7a5 5 0 1 1 -4.995 5.217l-.005 -.217l.005 -.217a5 5 0 0 1 4.995 -4.783z"></path></svg> </button> </li> </ul> </div> </div> </nav> <progress id="progress" value="0"> <div class="progress-container"> <span class="progress-bar"></span> </div> </progress> </header> <div class="post distill"> <d-title> <h1>在 TPU 上训练 LLaMA 3</h1> <p><a href="/scaling-book-zh/">如何扩展你的模型</a> 第 6 部分（<a href="../training">第 5 部分：训练</a> | <a href="../inference">第 7 部分：推理</a>）</p> <p class="translation-notice" style="font-size: 0.9em; opacity: 0.8;">本文是 <a href="https://jax-ml.github.io/scaling-book/" rel="external nofollow noopener" target="_blank">How To Scale Your Model</a>（Austin 等，Google DeepMind，2025）的非官方简体中文译本，依原项目 <a href="https://github.com/jax-ml/scaling-book/blob/main/LICENSE" rel="external nofollow noopener" target="_blank">MIT 许可证</a> 发布。如有出入，请以<a href="https://jax-ml.github.io/scaling-book/applied-training/" rel="external nofollow noopener" target="_blank">英文原文</a>为准。</p> <p>让我们仔细看看，如何利用上一节学到的内容在 TPU v5p 上训练 LLaMA 3 模型。它们有多大？不同配置下训练的开销有多大？它们是如何分片的？我们来做一些粗略估算，看看前几节的内容如何对应到真实的模型上。</p> </d-title> <d-byline> <div class="byline grid"> <div class="authors-affiliations grid"> <h3 style="grid-column: 1; grid-row: 1;">作者</h3> <h3></h3> <h3>单位</h3> <p class="author" style="grid-column: 1; grid-row: 2;"> <a class="name" href="https://www.jacobaustin.org/" rel="external nofollow noopener" target="_blank">Jacob Austin</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 2;"> <span class="affiliation">Google DeepMind</span> </p> <p class="author" style="grid-column: 1; grid-row: 3;"> <a class="name" href="https://x.com/_sholtodouglas" rel="external nofollow noopener" target="_blank">Sholto Douglas</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 3;"> <span class="affiliation"></span> </p> <p class="author" style="grid-column: 1; grid-row: 4;"> <a class="name" href="https://cs.stanford.edu/~rfrostig/" rel="external nofollow noopener" target="_blank">Roy Frostig</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 4;"> <span class="affiliation"></span> </p> <p class="author" style="grid-column: 1; grid-row: 5;"> <a class="name" href="https://anselmlevskaya.com/" rel="external nofollow noopener" target="_blank">Anselm Levskaya</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 5;"> <span class="affiliation"></span> </p> <p class="author" style="grid-column: 1; grid-row: 6;"> <a class="name" href="https://x.com/charliexychen" rel="external nofollow noopener" target="_blank">Charlie Chen</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 6;"> <span class="affiliation"></span> </p> <p class="author" style="grid-column: 1; grid-row: 7;"> <a class="name" href="https://sharadvikram.com/" rel="external nofollow noopener" target="_blank">Sharad Vikram</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 7;"> <span class="affiliation"></span> </p> <p class="author" style="grid-column: 2; grid-row: 2;"> <a class="name" href="https://fedelebron.com/" rel="external nofollow noopener" target="_blank">Federico Lebron</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 2;"> <span class="affiliation"></span> </p> <p class="author" style="grid-column: 2; grid-row: 3;"> <a class="name" href="https://x.com/pchoy95" rel="external nofollow noopener" target="_blank">Peter Choy</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 3;"> <span class="affiliation"></span> </p> <p class="author" style="grid-column: 2; grid-row: 4;"> <a class="name" href="https://x.com/vinayramasesh" rel="external nofollow noopener" target="_blank">Vinay Ramasesh</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 4;"> <span class="affiliation"></span> </p> <p class="author" style="grid-column: 2; grid-row: 5;"> <a class="name" href="https://representation.ai/" rel="external nofollow noopener" target="_blank">Albert Webson</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 5;"> <span class="affiliation"></span> </p> <p class="author" style="grid-column: 2; grid-row: 6;"> <a class="name" href="https://x.com/reinerpope" rel="external nofollow noopener" target="_blank">Reiner Pope<sup>*</sup></a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 6;"> <span class="affiliation"></span> </p> </div> <div> <h3>发布日期</h3> <p>2025 年 2 月 4 日</p> </div> </div> </d-byline> <d-article> <d-contents> <nav class="l-text figcaption"> <h3>目录</h3> <div> <a href="#what-does-llama-3-look-like">LLaMA 3 长什么样？</a> </div> <div> <a href="#counting-parameters-and-flops">计算参数量和 FLOPs</a> </div> <div> <a href="#how-to-shard-llama-3-70b-for-training">如何为训练分片 LLaMA 3-70B</a> </div> <div> <a href="#worked-problems">练习题</a> </div> </nav> </d-contents> <p><em>本节的目标是把上一节的结论应用到一个非常实际的问题上：训练 LLaMA 3 系列（herd）模型。与前几节不同，我们希望你自己完成其中的大部分工作。因此，我们把每个小节的答案都隐藏了起来，方便你先自己尝试作答。试着拿起笔手算一下吧！</em></p> <h3 id="what-does-llama-3-look-like">LLaMA 3 长什么样？</h3> <p>LLaMA-3 模型系列<d-cite key="llama3"></d-cite>包含 3 个主要模型：LLaMA 3 8B、70B 和 405B。我们主要关注 70B，而把 8B 和 405B 留给你在本节末尾的练习题中自行探索。下面是 LLaMA 3-70B 的架构，取自 LLaMA 的 <a href="https://huggingface.co/NousResearch/Meta-Llama-3-70B/blob/main/config.json" rel="external nofollow noopener" target="_blank">HuggingFace 页面</a>。</p> <table> <thead> <tr> <th><strong>超参数</strong></th> <th><strong>取值</strong></th> </tr> </thead> <tbody> <tr> <td>\(n_\text{layers}\) (L)</td> <td>80</td> </tr> <tr> <td>\(d_\text{model}\) (D)</td> <td>8,192</td> </tr> <tr> <td>\(d_{ff}\) (F)</td> <td>28,672</td> </tr> <tr> <td>\(n_\text{heads}\) (N)</td> <td>64</td> </tr> <tr> <td>\(n_\text{kv_heads}\) (K)</td> <td>8</td> </tr> <tr> <td>\(d_\text{qkv}\) (H)</td> <td>128</td> </tr> <tr> <td>\(n_\text{embeddings}\) (V)</td> <td>128,256</td> </tr> </tbody> </table> <p>为了说明这些信息有多容易找到，下面就是配置文件本身，以及对应关系：</p> <figure> <picture> <source class="responsive-img-srcset" srcset="/scaling-book-zh/assets/img/llama-json-480.webp 480w,/scaling-book-zh/assets/img/llama-json-800.webp 800w,/scaling-book-zh/assets/img/llama-json-1400.webp 1400w," type="image/webp" sizes="95vw"></source> <img src="/scaling-book-zh/assets/img/llama-json.png" class="img-fluid" width="100%" height="auto" loading="lazy" onerror="this.onerror=null; $('.responsive-img-srcset').remove();"> </picture> </figure> <p><em>把许多不同开源 LLM 的这些数字整理成一张大表会很有用，这样你就能快速比较它们各自做出的设计决策。</em></p> <h3 id="counting-parameters-and-flops">计算参数量和 FLOPs</h3> <p><strong>问题：</strong> 根据这张表，我们能算出 LLaMA 3-70B 的参数量吗？🤫 让我们运用<a href="../transformers">第 4 部分</a>的内容，看看能不能得到 70B！</p> <table> <thead> <tr> <th>参数</th> <th>公式</th> <th>数量</th> </tr> </thead> <tbody> <tr> <td>FFW 参数</td> <td>d_model * d_ff * 3（分别对应 SwiGLU 的 gate、up 和 down 投影）* n_layers</td> <td>8,192 * 8,192 * 3.5 * 3 * 80 = <strong>56.3e9</strong> </td> </tr> <tr> <td>词表参数</td> <td>2（输入和输出嵌入）* n_embeddings * d_model</td> <td>2 * 128,256 * 8,192 = <strong>2.1e9</strong> </td> </tr> <tr> <td>注意力参数</td> <td>n_layers * [ 2（对应 q 嵌入和拼接后的输出投影）* d_model * n_heads * d_qkv + 2（对应 k 和 v）* d_model * n_kv_heads * d_qkv]</td> <td>80 * (2 * 8,192 * 64 * 128 + 2 * 8,192 * 8 * 128) = <strong>12e9</strong> </td> </tr> <tr> <td> </td> <td> </td> <td>56.3e9 + 2.1e9 + 12e9 = <strong>70.4e9</strong> </td> </tr> </tbody> </table> <p>太好了！我们得到了预期的数字。你会注意到，正如预期的那样，FFW 参数在总参数量中占绝对主导，不过注意力部分也不可忽视。</p> <p class="takeaway"><strong>要点</strong>：MLP 块中的 3 个大权重矩阵比 Transformer 中所有其他数组都大得多，因此在推算模型内存或 FLOPs 时，我们通常几乎可以忽略其他所有参数。对 LLaMA 3-70B 来说，它们占了 70B 参数中的 56B。</p> <p>现在来看 FLOPs！<em>回忆一下<a href="../transformers">第 4 部分</a>中关于训练的一般规则。</em></p> <p><strong>问题：</strong> LLaMA-3 每个训练步对每个 token 要执行多少 FLOPs？<em>这有助于我们确定整个训练过程的开销有多大。</em></p> <details><summary>想好之后，点击此处查看答案！</summary> <p><strong>答案</strong>：如<a href="../transformers">第 4 部分</a>所示，每个 token 大约需要 \(6 \cdot \text{参数量}\) 次 FLOPs，所以这里大约是 <code class="language-plaintext highlighter-rouge">6 * 70e9 = 4.2e11</code> FLOPs / token。也就是说，每个训练步中每个 token 大约需要半个 TFLOP。假设我们是计算受限的，并且 FLOPs 利用率达到完美，那么在单颗 TPU v5p 芯片上这大约需要 <code class="language-plaintext highlighter-rouge">4.2e11 / 4.59E+14 = 1ms</code>。</p> </details> <p><strong>问题：</strong> LLaMA 3 大约训练了 15 万亿个 token。总共需要多少 FLOPs？</p> <details><summary>想好之后，点击此处查看答案！</summary> <p><strong>答案</strong>：这很简单，总量就是 <code class="language-plaintext highlighter-rouge">4.2e11 * 15e12 = 6.3e24 FLOPs</code>，即 6.3 yottaFLOPs。这可真不少！在单颗 TPU 上，这需要 <code class="language-plaintext highlighter-rouge">6.3e24 / 4.59E+14 = 435 years</code>。这也是很长的时间！</p> </details> <p><strong>问题：</strong> 假设我们想在一个完整的 TPU v5p Pod（16x20x28 = 8960 颗芯片）上训练。如果使用 bfloat16、MFU 为 40%，并假设是计算受限的，训练需要多长时间？</p> <details><summary>想好之后，点击此处查看答案！</summary> <p><strong>答案</strong>：我们知道每颗 TPU v5p 每秒可以执行 4.59e14 FLOPs。在 40% MFU 下，这大约需要 <code class="language-plaintext highlighter-rouge">T = 6.3e24 / (8960 * 4.59e14 * 0.4) = 3.8e6 seconds</code>。<strong>大约是 44 天！</strong> 只要我们真能达到 40% MFU，这个时间相当合理。</p> </details> <p><strong>问题：</strong> LLaMA 3-70B 预训练时使用的批大小（batch size）约为 4M 个 token。用这个批大小训练，我们至少需要多少颗 TPU？<em>你可以假设参数为 bfloat16、优化器状态为 float32，并且每层做 2 次激活值检查点（分别在层的开头和注意力之后）。</em></p> <details><summary>想好之后，点击此处查看答案！</summary> <p><strong>答案</strong>：这个问题主要考察的是内存占用，因为这是对可用算力唯一的硬性约束。训练期间，HBM 主要有三种用途：模型参数、优化器状态和激活值检查点。如果假设权重为 bfloat16、优化器状态为 float32，并采用一种<em>非常</em>保守的激活值检查点方案（每层 2 次），我们有：</p> <table> <tbody> <tr> <td><strong>参数</strong></td> <td>2 * 70GB</td> <td>~140GB</td> </tr> <tr> <td><strong>优化器状态</strong></td> <td>8 * 70GB</td> <td>~560GB</td> </tr> <tr> <td><strong>激活值检查点</strong></td> <td>2 * 8192 * 4e6 * 2 * 80</td> <td>~10.5TB</td> </tr> <tr> <td><strong>总计</strong></td> <td> </td> <td>~11.2TB</td> </tr> </tbody> </table> <p>这里的总量约为 11.2TB。你会注意到，即使采用非常保守的检查点方案，激活值检查点仍在内存占用中占据压倒性的主导地位。严格来说，我们可以改为每层 1 个检查点，或者使用微批次，但这已经是一个合理的估算了。在这些假设下，由于每颗 TPU v5p 有 96GB 的 HBM，我们需要 <code class="language-plaintext highlighter-rouge">11.2e12 / 96e9 = 117</code> 颗 TPU。其实并不算多！</p> <p><em>那为什么我们不这么做呢？</em> 因为这样训练需要 <code class="language-plaintext highlighter-rouge">44 days * 8960 / 117 = 3369 days</code>，差不多十年。<strong>这太久了。</strong> 不过，这清楚地表明：我们使用这些大规模集群，并不是因为受限于内存，而是因为我们需要额外的 FLOPs。此外，由于我们做检查点的频率很低，实际执行的 FLOPs 接近 8ND，而不是 6ND。</p> </details> <p><strong>问题：</strong> 在与上题相同的假设下，如果使用 8960 颗 TPU v5p 芯片，每颗芯片会占用多少内存？</p> <details><summary>想好之后，点击此处查看答案！</summary> <p><strong>答案</strong>：总内存仍然约为 11.2TB，因此每颗芯片大约只占用 1.3GB，基本上可以忽略不计。即使采用激进得多的检查点方案，例如每层 12 个检查点，每颗芯片也只需要 8GB。在这种规模下训练，我们离内存受限还远得很。</p> </details> <p class="takeaway"><strong>要点</strong>：从技术上讲，即使是非常大的模型也可以在非常小的拓扑上训练，只不过可能需要很长时间。只要能计算出一次训练运行的总 FLOPs，再假设一个适中的 MFU 和已知的拓扑，就能大致估算出训练时间。</p> <h3 id="how-to-shard-llama-3-70b-for-training">如何为训练分片 LLaMA 3-70B</h3> <p>沿用上面的设定：假设我们想在一个 8960 颗芯片的 TPU v5p Pod 上，用 4M token 的批大小（每批 1024 条长度为 4096 的序列）训练 LLaMA 3-70B。我们来讨论一下这个模型的最佳分片策略是什么。</p> <p><strong>问题：</strong> 在上述假设下，我们能只用 FSDP 来训练模型吗？首先，假设我们不能做任何序列并行/上下文并行。<em>这应该是你首先想到的方案，因为它很简单，而且如果行得通的话，不会引入任何额外的通信。</em></p> <details><summary>想好之后，点击此处查看答案！</summary> <p><strong>答案</strong>：这个答案会有点咬文嚼字。如上所述，LLaMA 3-70B 最初使用长度为 4K 的序列训练，因此 4M token 的批大小对应的<em>序列批大小</em>为 1024。这意味着我们实际上最多只能在 1024 颗芯片上做纯数据并行/FSDP，<em>因为我们只有这么多条序列可以用来做数据并行</em>。所以，按“完全数据并行、没有额外通信”这一简单含义来说，答案是否定的。下一个问题会回答一个稍微不那么咬文嚼字的版本。</p> </details> <p><strong>问题：</strong> 现在放宽“不做任何序列分片”的要求。如果允许同时在批次轴<em>和</em>序列轴上做 FSDP，我们能在 8960 颗芯片上只用 FSDP 训练 LLaMA 3-70B 吗？</p> <details><summary>想好之后，点击此处查看答案！</summary> <p><strong>答案</strong>：既然现在也允许做序列并行/上下文并行，我们就能扩展到大得多的规模。首先计算每个设备的批大小。如果做 8960 路 FSDP，每颗 TPU 的批大小就是 <code class="language-plaintext highlighter-rouge">4 * 1024 * 1024 / 8960 = 468 tokens</code>。从上一节我们知道，当 \(\text{每设备批大小} &lt; 2550 / M_X\) 时，FSDP 会变成 ICI 受限。由于在完整的 3D Pod 上我们可以把 3 个轴都用于此，这会给出 850 的下界，而我们远低于这个值。<strong>所以答案是否定的，即使用上 3 个轴也不行。我们将完全处于通信受限状态。</strong></p> </details> <p><strong>问题：</strong> 现在来看张量并行与 FSDP 混合使用的情况。是否存在某种组合能让我们保持计算受限？如果存在，FSDP 和张量并行各应该做多少？</p> <details><summary>想好之后，点击此处查看答案！</summary> <p><strong>答案</strong>：首先检查一下这是否可行。我们知道，如果每颗芯片的批大小小于 $2550^2 / 2F = 113$，就会通信受限。如上所示，我们略高于这个值。太好了！接下来，为了选出最优的 FSDP 规模，我们可以使用公式</p> \[X_{opt} = \sqrt{\frac{2BN}{F}} = \sqrt{\frac{2 \cdot 4.19e6 \cdot 8960}{28672}} = 1618\] <p>取一个合理的 2 的倍数，大致就是 2048 路 FSDP 和 4 路张量并行。这样应该效果很好！</p> </details> <p class="takeaway"><strong>要点</strong>：我们可以在一个完整的 TPU v5p Pod 上，用 4M token 的批大小训练 LLaMA-3，混合使用数据并行（1024 路）、序列并行（2 路）和张量并行（4 路），而不会通信受限。如果尝试纯 FSDP 或 FSDP + 序列并行，就会通信受限。我们在上一节推导出的这些公式非常实用。</p> <h2 id="worked-problems">练习题</h2> <p><strong>问题 1 [把 LLaMA 70B 扩展到更多芯片]：</strong> 假设我们想用相同的批大小在 4 个 Pod 上训练 LLaMA 3-70B。我们会采用什么并行方案？会是计算受限还是通信受限？训练大约需要多长时间？<em>注意要使用正确的 Roofline 上限。</em></p> <p><strong>问题 2 [LLaMA 405B]：</strong></p> <p>(a) 使用 LLaMA 3-405B 的<a href="https://huggingface.co/NousResearch/Hermes-3-Llama-3.1-405B/blob/main/config.json" rel="external nofollow noopener" target="_blank">配置</a>（这是一个需要申请访问权限的模型，因此你可能需要登录并申请访问才能查看），像上面那样列出一张包含所有关键超参数的表。这个模型总共有多少参数？每个训练步需要多少 FLOPs？如果训练 15T 个 token，总共要执行多少 FLOPs？</p> <p>(b) 假设我们想在 8 个 TPU v5p Pod 上训练。我们会采用什么并行方案？训练需要多长时间？会是计算受限还是通信受限？</p> <h3 class="next-section">第 6 部分到此结束。关于 Transformer 推理的第 7 部分，请点击<a href="../inference">这里</a>。</h3> </d-article> <d-appendix> <d-footnote-list></d-footnote-list> <d-citation-list></d-citation-list> <div class="base-grid appendix-entry"> <h3 style="grid-column: 0;">其他</h3> <p class="author-footnote" style="grid-column: text;"><sup>*</sup>工作完成于 Google DeepMind 期间，现就职于 MatX。</p> </div> <div class="base-grid appendix-entry"> <h3 style="grid-column: 0;">引用</h3> <p class="author-footnote">在学术场景中引用时，请引用英文原著：</p> <div class="author-footnote"> <div class="language-bibtex highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="c">Austin et al., "How to Scale Your Model", Google DeepMind, online, 2025.</span>
+</code></pre></div></div> </div> <p class="author-footnote">或使用如下 BibTeX 条目：</p> <div class="author-footnote"> <div class="language-bibtex highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="nc">@article</span><span class="p">{</span><span class="nl">scaling-book</span><span class="p">,</span>
+      <span class="na">title</span> <span class="p">=</span> <span class="s">{How to Scale Your Model}</span><span class="p">,</span>
+      <span class="na">author</span> <span class="p">=</span> <span class="s">{Austin, Jacob and Douglas, Sholto and Frostig, Roy and Levskaya, Anselm and Chen, Charlie and Vikram, Sharad
+      and Lebron, Federico and Choy, Peter and Ramasesh, Vinay and Webson, Albert and Pope, Reiner}</span><span class="p">,</span>
+      <span class="na">publisher</span> <span class="p">=</span> <span class="s">{Google DeepMind}</span><span class="p">,</span>
+      <span class="na">howpublished</span> <span class="p">=</span> <span class="s">{Online}</span><span class="p">,</span>
+      <span class="na">note</span> <span class="p">=</span> <span class="s">{Retrieved from https://jax-ml.github.io/scaling-book/}</span><span class="p">,</span>
+      <span class="na">year</span> <span class="p">=</span> <span class="s">{2025}</span>
+    <span class="p">}</span>
+</code></pre></div></div> </div> </div> </d-appendix> <d-bibliography src="/scaling-book-zh/assets/bibliography/main.bib"></d-bibliography> </div> <footer class="sticky-bottom mt-5" role="contentinfo"> <div class="container"> 非官方中文译本，原著 <a href="https://jax-ml.github.io/scaling-book/" rel="external nofollow noopener" target="_blank">How To Scale Your Model</a> © Google LLC，MIT 许可证。基于 <a href="https://jekyllrb.com/" target="_blank" rel="external nofollow noopener">Jekyll</a> 与 <a href="https://github.com/alshedivat/al-folio" rel="external nofollow noopener" target="_blank">al-folio</a> 主题构建，托管于 <a href="https://pages.github.com/" target="_blank" rel="external nofollow noopener">GitHub Pages</a>。 </div> </footer> <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js" integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script> <script src="/scaling-book-zh/assets/js/bootstrap.bundle.min.js"></script> <script src="https://cdn.jsdelivr.net/npm/mdbootstrap@4.20.0/js/mdb.min.js" integrity="sha256-NdbiivsvWt7VYCt6hYNT3h/th9vSTL4EDWeGs5SN3DA=" crossorigin="anonymous"></script> <script defer src="https://cdn.jsdelivr.net/npm/medium-zoom@1.1.0/dist/medium-zoom.min.js" integrity="sha256-ZgMyDAIYDYGxbcpJcfUnYwNevG/xi9OHKaR/8GK+jWc=" crossorigin="anonymous"></script> <script defer src="/scaling-book-zh/assets/js/zoom.js?85ddb88934d28b74e78031fd54cf8308"></script> <script src="/scaling-book-zh/assets/js/no_defer.js?2781658a0a2b13ed609542042a859126"></script> <script defer src="/scaling-book-zh/assets/js/common.js?e0514a05c5c95ac1a93a8dfd5249b92e"></script> <script defer src="/scaling-book-zh/assets/js/copy_code.js?abe41f2c1f7920d45c99e6ed5dd62144" type="text/javascript"></script> <script defer src="/scaling-book-zh/assets/js/jupyter_new_tab.js?d9f17b6adc2311cbabd747f4538bb15f"></script> <script defer src="/scaling-book-zh/assets/js/sidenotes.js?d6ef559e7281d3c2366fc75892637870"></script> <script defer type="text/javascript" id="MathJax-script" src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js" integrity="sha256-MASABpB4tYktI2Oitl4t+78w/lyA+D7b/s9GEP0JOGI=" crossorigin="anonymous"></script> <script src="/scaling-book-zh/assets/js/mathjax-setup.js?70d799092f862ad98c7876aa47712e20"></script> <script defer src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6" crossorigin="anonymous"></script> <script defer src="/scaling-book-zh/assets/js/progress-bar.js?2f30e0e6801ea8f5036fa66e1ab0a71a" type="text/javascript"></script> <script src="/scaling-book-zh/assets/js/vanilla-back-to-top.min.js?f40d453793ff4f64e238e420181a1d17"></script> <script>
+    addBackToTop();
+  </script> </body> </html>

@@ -1,0 +1,195 @@
+<!DOCTYPE html> <html> <head> <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"> <meta charset="utf-8"> <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no"> <meta http-equiv="X-UA-Compatible" content="IE=edge"> <title> 结论与延伸阅读 | 如何扩展你的模型 </title> <meta name="author" content=" "> <meta name="description" content="感谢阅读！这里我们再列出一些可供进一步学习的参考资料。"> <meta name="keywords" content="scaling, jax, llms, transformers, tpus, google, deepmind, parallelism, pallas"> <meta property="og:site_name" content="如何扩展你的模型"> <meta property="og:type" content="website"> <meta property="og:title" content="结论与延伸阅读"> <meta property="og:url" content="https://liyong03.github.io/scaling-book-zh/conclusion/"> <meta property="og:description" content="感谢阅读！这里我们再列出一些可供进一步学习的参考资料。"> <meta property="og:image" content="https://liyong03.github.io/scaling-book-zh/assets/img/dragon.png"> <meta property="og:locale" content="zh-CN"> <meta name="twitter:card" content="summary_large_image"> <meta name="twitter:title" content="结论与延伸阅读"> <meta name="twitter:description" content="感谢阅读！这里我们再列出一些可供进一步学习的参考资料。"> <meta name="twitter:image" content="https://liyong03.github.io/scaling-book-zh/assets/img/dragon.png"> <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "url": "https://liyong03.github.io/scaling-book-zh/conclusion/",
+        "name": "如何扩展你的模型",
+        "headline": "结论与延伸阅读",
+        
+        "description": "感谢阅读！这里我们再列出一些可供进一步学习的参考资料。"
+    }
+  </script> <link rel="stylesheet" href="/scaling-book-zh/assets/css/bootstrap.min.css?a4b3f509e79c54a512b890d73235ef04"> <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/mdbootstrap@4.20.0/css/mdb.min.css" integrity="sha256-jpjYvU3G3N6nrrBwXJoVEYI/0zw8htfFnhT9ljN3JJw=" crossorigin="anonymous"> <link rel="preload" as="font" type="font/woff2" crossorigin href="/scaling-book-zh/assets/fonts/roboto/roboto-latin.woff2"> <link defer rel="stylesheet" href="/scaling-book-zh/assets/css/academicons.min.css?f0b7046b84e425c55f3463ac249818f5"> <link defer rel="stylesheet" href="/scaling-book-zh/assets/css/scholar-icons.css?62b2ac103a88034e6882a5be5f3e2772"> <link defer rel="stylesheet" href="/scaling-book-zh/assets/css/jekyll-pygments-themes-vs.css?4ee1a2facd1a8a76347f4bd43a740500" media="" id="highlight_theme_light"> <link rel="icon" href="/scaling-book-zh/assets/img/favicon.ico?40fa984da00a7d776e79162fb29402f2" sizes="48x48"> <link rel="icon" type="image/png" href="/scaling-book-zh/assets/img/favicon-96x96.png?6fad83cd890cb60f9e27143afa90eefd" sizes="96x96"> <link rel="icon" type="image/png" href="/scaling-book-zh/assets/img/favicon-192x192.png?3fdfb758795130ba54a94ab468f6e7ec" sizes="192x192"> <link rel="apple-touch-icon" href="/scaling-book-zh/assets/img/apple-touch-icon.png?0e2a9fab4bca21b912aa5871abd33c2a"> <link rel="stylesheet" href="/scaling-book-zh/assets/css/main.css?d41d8cd98f00b204e9800998ecf8427e"> <link rel="canonical" href="https://liyong03.github.io/scaling-book-zh/conclusion/"> <script src="/scaling-book-zh/assets/js/theme.js?9a0c749ec5240d9cda97bc72359a72c0"></script> <link defer rel="stylesheet" href="/scaling-book-zh/assets/css/jekyll-pygments-themes-native.css?5847e5ed4a4568527aa6cfab446049ca" media="none" id="highlight_theme_dark"> <script>
+    initTheme();
+  </script> <script>
+  try {
+    if (localStorage.getItem("tufte-sidenotes-enabled") === "1") {
+      document.documentElement.classList.add("tufte-mode");
+    }
+  } catch (e) {}
+</script> <script src="/scaling-book-zh/assets/js/distillpub/template.v2.js"></script> <script src="/scaling-book-zh/assets/js/distillpub/transforms.v2.js"></script> <style type="text/css">.fake-img{background:#bbb;border:1px solid rgba(0,0,0,0.1);box-shadow:0 0 4px rgba(0,0,0,0.1);margin-bottom:12px}.fake-img p{font-family:monospace;color:white;text-align:left;margin:12px 0;text-align:center;font-size:16px}.algorithm{padding:10px;margin-top:5px;margin-bottom:5px;border-style:dashed;background-color:#fffaf2}.algorithm li{margin-bottom:0}</style> </head> <body> <d-front-matter> <script async type="text/json">
+      {
+            "title": "结论与延伸阅读",
+            "description": "感谢阅读！这里我们再列出一些可供进一步学习的参考资料。",
+            "published": "February 04, 2025",
+            "authors": [
+              
+              {
+                "author": "Jacob Austin",
+                "authorURL": "https://www.jacobaustin.org/",
+                "affiliations": [
+                  {
+                    "name": "Google DeepMind",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Sholto Douglas",
+                "authorURL": "https://x.com/_sholtodouglas",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Roy Frostig",
+                "authorURL": "https://cs.stanford.edu/~rfrostig/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Anselm Levskaya",
+                "authorURL": "https://anselmlevskaya.com/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Charlie Chen",
+                "authorURL": "https://x.com/charliexychen",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Sharad Vikram",
+                "authorURL": "https://sharadvikram.com/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Federico Lebron",
+                "authorURL": "https://fedelebron.com/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Peter Choy",
+                "authorURL": "https://x.com/pchoy95",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Vinay Ramasesh",
+                "authorURL": "https://x.com/vinayramasesh",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Albert Webson",
+                "authorURL": "https://representation.ai/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Reiner Pope<sup>*</sup>",
+                "authorURL": "https://x.com/reinerpope",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              }
+              
+            ],
+            "katex": {
+              "delimiters": [
+                {
+                  "left": "$",
+                  "right": "$",
+                  "display": false
+                },
+                {
+                  "left": "$$",
+                  "right": "$$",
+                  "display": true
+                }
+              ]
+            }
+          }
+    </script> </d-front-matter> <header> <script>
+    function goToTop() {
+      document.body.scrollTop = 0; // For Safari
+      document.documentElement.scrollTop = 0; // For Chrome, Firefox, IE and Opera
+    }
+
+    // When the user scrolls down 20px from the top of the document, show the button
+    window.onscroll = function() {scrollFunction()};
+
+    function scrollFunction() {
+      // Get the button:
+      let mybutton = document.getElementById("top-button");
+      if (!mybutton) return;
+
+      if (document.body.scrollTop > 40 || document.documentElement.scrollTop > 40) {
+        mybutton.style.display = "block";
+      } else {
+        mybutton.style.display = "none";
+      }
+  }
+  </script> <nav id="navbar" class="navbar navbar-light navbar-expand-sm fixed-top" role="navigation"> <div class="container"> <a class="navbar-brand title font-weight-lighter" href="/scaling-book-zh"> 如何扩展你的模型 </a> <button class="navbar-toggler collapsed ml-auto" type="button" data-toggle="collapse" data-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="切换导航"> <span class="sr-only">切换导航</span> <span class="icon-bar top-bar"></span> <span class="icon-bar middle-bar"></span> <span class="icon-bar bottom-bar"></span> </button> <div class="left-button section-button"><a href="../jax-stuff"><svg viewbox="-78.5 0 512 512"><path d="M257 64L291 98 128 262 291 426 257 460 61 262 257 64Z"></path></svg></a></div> <div class="right-button section-button"><a href="../gpus"><svg viewbox="-78.5 0 512 512"><path d="M98 460L64 426 227 262 64 98 98 64 294 262 98 460Z"></path></svg></a></div> <div class="collapse navbar-collapse text-right" id="navbarNav"> <ul class="navbar-nav ml-auto flex-nowrap"> <li class="nav-item "> <a class="nav-link" href="/scaling-book-zh/"> </a> </li> <li class="nav-item nav-hidden"><a class="nav-link" href="../jax-stuff">上一部分</a></li> <li class="nav-item nav-hidden"><a class="nav-link" href="../gpus">下一部分</a></li> <li class="nav-item dropdown "> <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false"> <i class="ti ti-list dropdown-icon"></i> <span class="dropdown-text">章节</span> </a> <div class="dropdown-menu dropdown-menu-right" aria-labelledby="navbarDropdown"> <a class="dropdown-item " href="/scaling-book-zh/index">第 0 部分：引言</a> <a class="dropdown-item " href="/scaling-book-zh/roofline">第 1 部分：Roofline 模型</a> <a class="dropdown-item " href="/scaling-book-zh/tpus">第 2 部分：TPU</a> <a class="dropdown-item " href="/scaling-book-zh/sharding">第 3 部分：分片</a> <a class="dropdown-item " href="/scaling-book-zh/transformers">第 4 部分：Transformer 数学</a> <a class="dropdown-item " href="/scaling-book-zh/training">第 5 部分：训练</a> <a class="dropdown-item " href="/scaling-book-zh/applied-training">第 6 部分：训练 LLaMA</a> <a class="dropdown-item " href="/scaling-book-zh/inference">第 7 部分：推理</a> <a class="dropdown-item " href="/scaling-book-zh/applied-inference">第 8 部分：部署 LLaMA</a> <a class="dropdown-item " href="/scaling-book-zh/profiling">第 9 部分：性能分析</a> <a class="dropdown-item " href="/scaling-book-zh/jax-stuff">第 10 部分：JAX</a> <a class="dropdown-item " href="/scaling-book-zh/conclusion">第 11 部分：结论</a> <a class="dropdown-item " href="/scaling-book-zh/gpus">第 12 部分：GPU</a> </div> </li> <li class="toggle-container"> <button id="light-toggle" title="切换主题"> <svg id="light-toggle-system" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.173 14.83a4 4 0 1 1 5.657 -5.657"></path><path d="M11.294 12.707l.174 .247a7.5 7.5 0 0 0 8.845 2.492a9 9 0 0 1 -14.671 2.914"></path><path d="M3 12h1"></path><path d="M12 3v1"></path><path d="M5.6 5.6l.7 .7"></path><path d="M3 21l18 -18"></path></svg> <svg id="light-toggle-dark" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewbox="0 0 24 24" fill="currentColor"><path d="M12 1.992a10 10 0 1 0 9.236 13.838c.341 -.82 -.476 -1.644 -1.298 -1.31a6.5 6.5 0 0 1 -6.864 -10.787l.077 -.08c.551 -.63 .113 -1.653 -.758 -1.653h-.266l-.068 -.006l-.06 -.002z"></path></svg> <svg id="light-toggle-light" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewbox="0 0 24 24" fill="currentColor"><path d="M12 19a1 1 0 0 1 .993 .883l.007 .117v1a1 1 0 0 1 -1.993 .117l-.007 -.117v-1a1 1 0 0 1 1 -1z"></path><path d="M18.313 16.91l.094 .083l.7 .7a1 1 0 0 1 -1.32 1.497l-.094 -.083l-.7 -.7a1 1 0 0 1 1.218 -1.567l.102 .07z"></path><path d="M7.007 16.993a1 1 0 0 1 .083 1.32l-.083 .094l-.7 .7a1 1 0 0 1 -1.497 -1.32l.083 -.094l.7 -.7a1 1 0 0 1 1.414 0z"></path><path d="M4 11a1 1 0 0 1 .117 1.993l-.117 .007h-1a1 1 0 0 1 -.117 -1.993l.117 -.007h1z"></path><path d="M21 11a1 1 0 0 1 .117 1.993l-.117 .007h-1a1 1 0 0 1 -.117 -1.993l.117 -.007h1z"></path><path d="M6.213 4.81l.094 .083l.7 .7a1 1 0 0 1 -1.32 1.497l-.094 -.083l-.7 -.7a1 1 0 0 1 1.217 -1.567l.102 .07z"></path><path d="M19.107 4.893a1 1 0 0 1 .083 1.32l-.083 .094l-.7 .7a1 1 0 0 1 -1.497 -1.32l.083 -.094l.7 -.7a1 1 0 0 1 1.414 0z"></path><path d="M12 2a1 1 0 0 1 .993 .883l.007 .117v1a1 1 0 0 1 -1.993 .117l-.007 -.117v-1a1 1 0 0 1 1 -1z"></path><path d="M12 7a5 5 0 1 1 -4.995 5.217l-.005 -.217l.005 -.217a5 5 0 0 1 4.995 -4.783z"></path></svg> </button> </li> </ul> </div> </div> </nav> <progress id="progress" value="0"> <div class="progress-container"> <span class="progress-bar"></span> </div> </progress> </header> <div class="post distill"> <d-title> <h1>结论与延伸阅读</h1> <p><a href="/scaling-book-zh/">如何扩展你的模型</a> 第 11 部分（<a href="../jax-stuff">第 10 部分：JAX</a> | <a href="../gpus">第 12 部分：GPU</a>）</p> <p class="translation-notice" style="font-size: 0.9em; opacity: 0.8;">本文是 <a href="https://jax-ml.github.io/scaling-book/" rel="external nofollow noopener" target="_blank">How To Scale Your Model</a>（Austin 等，Google DeepMind，2025）的非官方简体中文译本，依原项目 <a href="https://github.com/jax-ml/scaling-book/blob/main/LICENSE" rel="external nofollow noopener" target="_blank">MIT 许可证</a> 发布。如有出入，请以<a href="https://jax-ml.github.io/scaling-book/conclusion/" rel="external nofollow noopener" target="_blank">英文原文</a>为准。</p> <p>感谢阅读！这里我们再列出一些可供进一步学习的参考资料。</p> </d-title> <d-byline> <div class="byline grid"> <div class="authors-affiliations grid"> <h3 style="grid-column: 1; grid-row: 1;">作者</h3> <h3></h3> <h3>单位</h3> <p class="author" style="grid-column: 1; grid-row: 2;"> <a class="name" href="https://www.jacobaustin.org/" rel="external nofollow noopener" target="_blank">Jacob Austin</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 2;"> <span class="affiliation">Google DeepMind</span> </p> <p class="author" style="grid-column: 1; grid-row: 3;"> <a class="name" href="https://x.com/_sholtodouglas" rel="external nofollow noopener" target="_blank">Sholto Douglas</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 3;"> <span class="affiliation"></span> </p> <p class="author" style="grid-column: 1; grid-row: 4;"> <a class="name" href="https://cs.stanford.edu/~rfrostig/" rel="external nofollow noopener" target="_blank">Roy Frostig</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 4;"> <span class="affiliation"></span> </p> <p class="author" style="grid-column: 1; grid-row: 5;"> <a class="name" href="https://anselmlevskaya.com/" rel="external nofollow noopener" target="_blank">Anselm Levskaya</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 5;"> <span class="affiliation"></span> </p> <p class="author" style="grid-column: 1; grid-row: 6;"> <a class="name" href="https://x.com/charliexychen" rel="external nofollow noopener" target="_blank">Charlie Chen</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 6;"> <span class="affiliation"></span> </p> <p class="author" style="grid-column: 1; grid-row: 7;"> <a class="name" href="https://sharadvikram.com/" rel="external nofollow noopener" target="_blank">Sharad Vikram</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 7;"> <span class="affiliation"></span> </p> <p class="author" style="grid-column: 2; grid-row: 2;"> <a class="name" href="https://fedelebron.com/" rel="external nofollow noopener" target="_blank">Federico Lebron</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 2;"> <span class="affiliation"></span> </p> <p class="author" style="grid-column: 2; grid-row: 3;"> <a class="name" href="https://x.com/pchoy95" rel="external nofollow noopener" target="_blank">Peter Choy</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 3;"> <span class="affiliation"></span> </p> <p class="author" style="grid-column: 2; grid-row: 4;"> <a class="name" href="https://x.com/vinayramasesh" rel="external nofollow noopener" target="_blank">Vinay Ramasesh</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 4;"> <span class="affiliation"></span> </p> <p class="author" style="grid-column: 2; grid-row: 5;"> <a class="name" href="https://representation.ai/" rel="external nofollow noopener" target="_blank">Albert Webson</a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 5;"> <span class="affiliation"></span> </p> <p class="author" style="grid-column: 2; grid-row: 6;"> <a class="name" href="https://x.com/reinerpope" rel="external nofollow noopener" target="_blank">Reiner Pope<sup>*</sup></a> </p> <p class="affiliation" style="grid-column: 3; grid-row: 6;"> <span class="affiliation"></span> </p> </div> <div> <h3>发布日期</h3> <p>2025 年 2 月 4 日</p> </div> </div> </d-byline> <d-article> <d-contents> <nav class="l-text figcaption"> <h3>目录</h3> <div> <a href="#acknowledgments">致谢</a> </div> <div> <a href="#further-reading">延伸阅读</a> </div> <div> <a href="#feedback">反馈</a> </div> </nav> </d-contents> <p><strong>感谢你读完全书，恭喜你一路坚持到了最后。</strong> 在结束之前，先说几句致谢：</p> <h2 id="acknowledgments">致谢</h2> <p>这份文档凝聚了 Google DeepMind 许多人的大量心血，我们想在这里简单地向他们致谢！</p> <ul> <li>James Bradbury、Reiner Pope、Noam Shazeer 和 Blake Hechtman 最早推导出了本书中的许多思想，也是最早从系统视角理解 Transformer 的一批人。</li> <li>Sholto Douglas 撰写了本文档的第一版，并发起了这个项目。对于本文档的整体叙事，他的贡献比任何人都大。</li> <li>Jacob Austin 主导了将第一版从粗略笔记打磨成一份更精致、更全面的作品的工作。编辑、排版和发布本文档的大部分工作都由他完成，他还协调了其他作者的贡献。</li> <li>大部分图表和动画由 Anselm Levskaya 和 Charlie Chen 制作。</li> <li>Charlie Chen 撰写了推理部分，并绘制了许多推理相关的图。</li> <li>Roy Frostig 在出版、编辑以及整个过程中的许多其他环节提供了帮助。</li> </ul> <p>我们还要感谢在整个过程中提供了关键反馈的许多其他人，特别是 Zak Stone、Nikhil Sethi、Caitlin Stanton、Alek Dimitriev、Sridhar Lakshmanamurthy、Albert Magyar、Diwakar Gupta、Jeff Dean、Corry Wang、Matt Johnson、Peter Hawkins 以及其他很多人。感谢 Ruiqi Gao 在 HTML 排版上提供的帮助。</p> <p><strong>谢谢大家！</strong></p> <p class="announce">离开之前，你或许还会喜欢阅读关于 NVIDIA GPU 的全新<a href="../gpus">第 12 部分</a>！</p> <h2 id="further-reading">延伸阅读</h2> <p>有很多相关的文章，包括以下这些：</p> <ul> <li> <a href="https://henryhmko.github.io/posts/tpu/tpu.html" rel="external nofollow noopener" target="_blank"><strong>TPU Deep Dive</strong></a>：一篇很棒的深入剖析 TPU 架构的文章，风格与本书一脉相承。</li> <li> <a href="https://fleetwood.dev/posts/domain-specific-architectures" rel="external nofollow noopener" target="_blank"><strong>Domain specific architectures for AI inference</strong></a>：一篇对硬件和模型的深入探讨，风格与本书一脉相承。</li> <li> <a href="https://dl.acm.org/doi/pdf/10.1145/3360307" rel="external nofollow noopener" target="_blank"><strong>A Domain-Specific Supercomputer for Training Deep Neural Networks</strong></a>：最早的 TPU 论文之一，包含许多关于 Google TPU 项目的精彩细节，这些内容本书没有涉及。</li> <li> <a href="https://horace.io/brrr_intro.html" rel="external nofollow noopener" target="_blank"><strong>Making Deep Learning Go Brrrr From First Principles</strong></a>：一篇更侧重 GPU 和 PyTorch 的教程，讲解 LLM 的 Roofline 分析与性能工程。</li> <li> <a href="https://jax.readthedocs.io/en/latest/pallas/tpu/details.html" rel="external nofollow noopener" target="_blank"><strong>Writing TPU Kernels with Pallas</strong></a>：TPU 编程越来越多地涉及用 Pallas 编写自定义 kernel。这一系列文档讨论了如何编写 kernel，以及许多本书未提及的更底层的 TPU 细节。</li> <li> <a href="https://siboehm.com/articles/22/CUDA-MMM" rel="external nofollow noopener" target="_blank"><strong>How to Optimize a CUDA Matmul Kernel for cuBLAS-like Performance: a Worklog</strong></a>：虽然专门针对 GPU 和 CUDA，但这是一篇出色的博客文章，展示了如何在 CUDA 中优化矩阵乘法（matmul）kernel。它或许能帮你深入理解 TPU 与 GPU 的区别。</li> <li> <a href="https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html" rel="external nofollow noopener" target="_blank"><strong>Distributed arrays and automatic parallelization</strong></a>：这是一份非常好的 JAX 并行 API 指南，也是学习如何实际实现我们在这里讨论的一些思想的好途径。</li> <li> <a href="https://github.com/rwitten/HighPerfLLMs2024" rel="external nofollow noopener" target="_blank"><strong>Rafi Witten’s High Performance LLMs 2024 Class</strong></a>：我们的前同事 Rafi 开过一门很棒的 TPU 性能工程课程，所有幻灯片都放在 GitHub 上。其中很多内容比本书讲得更深入。</li> <li> <a href="https://arxiv.org/abs/2211.05102" rel="external nofollow noopener" target="_blank"><strong>[2211.05102] Efficiently Scaling Transformer Inference</strong></a>：一篇详细讨论 Transformer 推理数学的论文，本文档的许多内容都受其启发。</li> <li> <a href="https://huggingface.co/spaces/nanotron/ultrascale-playbook" rel="external nofollow noopener" target="_blank"><strong>Huggingface Ultra-Scale Playbook</strong></a>：可以算是本书的 GPU 版对应读物，它更深入地讨论了 PyTorch 在训练中如何实现各种并行技术和节省内存的技术。</li> <li> <a href="https://kipp.ly/transformer-inference-arithmetic/" rel="external nofollow noopener" target="_blank"><strong>Transformer Inference Arithmetic</strong></a>：一篇博客，包含许多与本书相同的思想，还有一些出色的插图。</li> <li> <a href="https://stanford-cs336.github.io/spring2025/index.html#coursework" rel="external nofollow noopener" target="_blank"><strong>Stanford CS336 Slides and Videos</strong></a>：一门非常棒的 Stanford 课程，涵盖了 LLM 训练和部署的许多细节，并配有一些有用的练习。其中作业 1 和作业 2 尤其相关。</li> <li> <a href="https://github.com/stas00/ml-engineering" rel="external nofollow noopener" target="_blank"><strong>Stas Bekman’s ML Engineering Handbook</strong></a>：一份非常实用的 ML 基础设施指南，涵盖了本书没有涉及的主题，比如如何与云服务商谈判、集群管理，以及 GPU 吞吐量的实测数据。</li> <li> <a href="https://blog.ezyang.com/2026/01/computing-sharding-with-einsum/" rel="external nofollow noopener" target="_blank"><strong>ezyang’s blog</strong></a>：一位 PyTorch 负责人的博客，内容涵盖分片与 PyTorch 的方方面面，包括一篇 <a href="https://blog.ezyang.com/2019/05/pytorch-internals/" rel="external nofollow noopener" target="_blank">PyTorch 内部机制指南</a>和一篇<a href="https://blog.ezyang.com/2026/01/computing-sharding-with-einsum/" rel="external nofollow noopener" target="_blank">关于分片矩阵乘法的文章</a>。这里还有很多其他好内容。</li> <li> <a href="https://www.aleksagordic.com/blog/collective-operations" rel="external nofollow noopener" target="_blank"><strong>The Anatomy of Collective Communication</strong></a>：一篇不错的 GPU 和 TPU 集合通信详解，风格与本书一脉相承。它对 N 维集合通信和 GPU 集合通信的讲解比本书更好。</li> </ul> <p>这一领域仍有大量空间留给全面系统的写作，我们希望本书能激励更多这样的作品！我们也相信这是一个值得学习和研究的、大有可为的领域。在很多情况下，即使手头没有很多硬件加速器，也可以开展这方面的研究。</p> <h2 id="feedback">反馈</h2> <p>欢迎留下评论或问题，帮助我们进一步改进本书。你可以通过 jacobaustin123 [at] gmail [dot] com 联系我们的通讯作者 Jacob Austin，也可以 <a href="https://github.com/jax-ml/scaling-book" rel="external nofollow noopener" target="_blank">在 GitHub 上</a>提交 issue、pull request 或发起讨论来建议修改。</p> </d-article> <d-appendix> <d-footnote-list></d-footnote-list> <d-citation-list></d-citation-list> <div class="base-grid appendix-entry"> <h3 style="grid-column: 0;">其他</h3> <p class="author-footnote" style="grid-column: text;"><sup>*</sup>工作完成于 Google DeepMind 期间，现就职于 MatX。</p> </div> <div class="base-grid appendix-entry"> <h3 style="grid-column: 0;">引用</h3> <p class="author-footnote">在学术场景中引用时，请引用英文原著：</p> <div class="author-footnote"> <div class="language-bibtex highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="c">Austin et al., "How to Scale Your Model", Google DeepMind, online, 2025.</span>
+</code></pre></div></div> </div> <p class="author-footnote">或使用如下 BibTeX 条目：</p> <div class="author-footnote"> <div class="language-bibtex highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="nc">@article</span><span class="p">{</span><span class="nl">scaling-book</span><span class="p">,</span>
+      <span class="na">title</span> <span class="p">=</span> <span class="s">{How to Scale Your Model}</span><span class="p">,</span>
+      <span class="na">author</span> <span class="p">=</span> <span class="s">{Austin, Jacob and Douglas, Sholto and Frostig, Roy and Levskaya, Anselm and Chen, Charlie and Vikram, Sharad
+      and Lebron, Federico and Choy, Peter and Ramasesh, Vinay and Webson, Albert and Pope, Reiner}</span><span class="p">,</span>
+      <span class="na">publisher</span> <span class="p">=</span> <span class="s">{Google DeepMind}</span><span class="p">,</span>
+      <span class="na">howpublished</span> <span class="p">=</span> <span class="s">{Online}</span><span class="p">,</span>
+      <span class="na">note</span> <span class="p">=</span> <span class="s">{Retrieved from https://jax-ml.github.io/scaling-book/}</span><span class="p">,</span>
+      <span class="na">year</span> <span class="p">=</span> <span class="s">{2025}</span>
+    <span class="p">}</span>
+</code></pre></div></div> </div> </div> </d-appendix> <d-bibliography src="/scaling-book-zh/assets/bibliography/"></d-bibliography> </div> <footer class="sticky-bottom mt-5" role="contentinfo"> <div class="container"> 非官方中文译本，原著 <a href="https://jax-ml.github.io/scaling-book/" rel="external nofollow noopener" target="_blank">How To Scale Your Model</a> © Google LLC，MIT 许可证。基于 <a href="https://jekyllrb.com/" target="_blank" rel="external nofollow noopener">Jekyll</a> 与 <a href="https://github.com/alshedivat/al-folio" rel="external nofollow noopener" target="_blank">al-folio</a> 主题构建，托管于 <a href="https://pages.github.com/" target="_blank" rel="external nofollow noopener">GitHub Pages</a>。 </div> </footer> <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js" integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script> <script src="/scaling-book-zh/assets/js/bootstrap.bundle.min.js"></script> <script src="https://cdn.jsdelivr.net/npm/mdbootstrap@4.20.0/js/mdb.min.js" integrity="sha256-NdbiivsvWt7VYCt6hYNT3h/th9vSTL4EDWeGs5SN3DA=" crossorigin="anonymous"></script> <script defer src="https://cdn.jsdelivr.net/npm/medium-zoom@1.1.0/dist/medium-zoom.min.js" integrity="sha256-ZgMyDAIYDYGxbcpJcfUnYwNevG/xi9OHKaR/8GK+jWc=" crossorigin="anonymous"></script> <script defer src="/scaling-book-zh/assets/js/zoom.js?85ddb88934d28b74e78031fd54cf8308"></script> <script src="/scaling-book-zh/assets/js/no_defer.js?2781658a0a2b13ed609542042a859126"></script> <script defer src="/scaling-book-zh/assets/js/common.js?e0514a05c5c95ac1a93a8dfd5249b92e"></script> <script defer src="/scaling-book-zh/assets/js/copy_code.js?abe41f2c1f7920d45c99e6ed5dd62144" type="text/javascript"></script> <script defer src="/scaling-book-zh/assets/js/jupyter_new_tab.js?d9f17b6adc2311cbabd747f4538bb15f"></script> <script defer src="/scaling-book-zh/assets/js/sidenotes.js?d6ef559e7281d3c2366fc75892637870"></script> <script defer type="text/javascript" id="MathJax-script" src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js" integrity="sha256-MASABpB4tYktI2Oitl4t+78w/lyA+D7b/s9GEP0JOGI=" crossorigin="anonymous"></script> <script src="/scaling-book-zh/assets/js/mathjax-setup.js?70d799092f862ad98c7876aa47712e20"></script> <script defer src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6" crossorigin="anonymous"></script> <script defer src="/scaling-book-zh/assets/js/progress-bar.js?2f30e0e6801ea8f5036fa66e1ab0a71a" type="text/javascript"></script> <script src="/scaling-book-zh/assets/js/vanilla-back-to-top.min.js?f40d453793ff4f64e238e420181a1d17"></script> <script>
+    addBackToTop();
+  </script> </body> </html>
