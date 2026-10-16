@@ -14,8 +14,8 @@ codeBlocks.forEach(function (codeBlock) {
     var copyButton = document.createElement("button");
     copyButton.className = "copy";
     copyButton.type = "button";
-    copyButton.ariaLabel = "Copy code to clipboard";
-    copyButton.innerText = "Copy";
+    copyButton.ariaLabel = "复制代码到剪贴板";
+    copyButton.innerText = "复制";
     copyButton.innerHTML = '<i class="fa-solid fa-clipboard"></i>';
 
     // get code from code block and copy to clipboard
@@ -32,12 +32,12 @@ codeBlocks.forEach(function (codeBlock) {
         var code = codeBlock.querySelector("code").innerText.trim();
       }
       window.navigator.clipboard.writeText(code);
-      copyButton.innerText = "Copied";
+      copyButton.innerText = "已复制";
       copyButton.innerHTML = '<i class="fa-solid fa-clipboard-check"></i>';
       var waitFor = 3000;
 
       setTimeout(function () {
-        copyButton.innerText = "Copy";
+        copyButton.innerText = "复制";
         copyButton.innerHTML = '<i class="fa-solid fa-clipboard"></i>';
       }, waitFor);
     });

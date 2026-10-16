@@ -83,9 +83,9 @@
             </a>
           </li>
 
-      <li class="nav-item nav-hidden"><a class="nav-link" href="{{ page.previous_section_url }}">Previous Part</a></li>
+      <li class="nav-item nav-hidden"><a class="nav-link" href="{{ page.previous_section_url }}">上一部分</a></li>
 
-      <li class="nav-item nav-hidden"><a class="nav-link" href="{{ page.next_section_url }}">Next Part</a></li>
+      <li class="nav-item nav-hidden"><a class="nav-link" href="{{ page.next_section_url }}">下一部分</a></li>
  
           <!-- Other pages -->
           {% assign sorted_pages = site.pages | sort: 'nav_order' %}
@@ -152,7 +152,7 @@
           {% if site.search_enabled %}
             <!-- Search -->
             <li class="nav-item">
-              <button id="search-toggle" title="Search" onclick="openSearchModal()">
+              <button id="search-toggle" title="搜索" onclick="openSearchModal()">
                 <span class="nav-link">ctrl k <i class="ti ti-search"></i></span>
               </button>
             </li>

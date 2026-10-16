@@ -237,7 +237,7 @@
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "tufte-settings-btn";
-    btn.title = "Display settings";
+    btn.title = "显示设置";
     btn.setAttribute("aria-haspopup", "true");
     btn.setAttribute("aria-expanded", "false");
     btn.innerHTML =
@@ -258,7 +258,7 @@
     const id = "tufte-sidenotes-toggle";
     panel.innerHTML =
       '<label for="' + id + '">' +
-      '<input type="checkbox" id="' + id + '"> Tufte footnotes' +
+      '<input type="checkbox" id="' + id + '"> 以旁注形式显示脚注（Tufte 风格）' +
       "</label>";
     wrap.appendChild(panel);
 
